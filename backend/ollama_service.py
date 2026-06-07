@@ -20,6 +20,22 @@ import shutil
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
+def _extract_content(response) -> str:
+    """
+    Extract the text content from an ollama.chat() response.
+
+    Handles both API versions:
+      - v0.3 and older: response is a dict  → response["message"]["content"]
+      - v0.4+ (current): response is a ChatResponse object
+                         → response.message.content
+    """
+    if hasattr(response, "message"):
+        # v0.4+ ChatResponse object
+        return response.message.content
+    # v0.3 plain dict
+    return response["message"]["content"]
+
+
 # Human-readable instruction appended to each chunk request to control length
 _LENGTH_INSTRUCTIONS: dict[str, str] = {
     "short":         "Erstelle eine sehr kompakte Zusammenfassung (~20% des Originals). "
@@ -44,17 +60,42 @@ class OllamaService:
         """
         Return the models currently installed in Ollama.
         If Ollama is not reachable, returns an empty list (no crash).
+
+        Handles both ollama library API versions:
+          - v0.3 and older: response is a dict with response["models"] = list of dicts,
+            each dict has key "name"
+          - v0.4+ (current):  response is a ListResponse object with .models attribute,
+            each model is a Model object with .model (name) and .size attributes
         """
         try:
             import ollama
             response = ollama.list()
-            return [
-                {
-                    "name": m["name"],
-                    "size_gb": round(m.get("size", 0) / 1e9, 1),
-                }
-                for m in response.get("models", [])
-            ]
+
+            # v0.4+: ListResponse object with .models list of Model objects
+            if hasattr(response, "models"):
+                raw_models = response.models
+            else:
+                # v0.3: plain dict
+                raw_models = response.get("models", [])
+
+            result = []
+            for m in raw_models:
+                if hasattr(m, "model"):
+                    # v0.4+ Model object: name is .model, size is .size
+                    name = m.model
+                    size = getattr(m, "size", 0) or 0
+                else:
+                    # v0.3 dict: name is "name", size is "size"
+                    name = m.get("name") or m.get("model", "unknown")
+                    size = m.get("size", 0) or 0
+
+                result.append({
+                    "name": name,
+                    "size_gb": round(size / 1e9, 1),
+                })
+
+            return result
+
         except Exception as exc:
             print(f"[ollama_service] Ollama nicht erreichbar: {exc}")
             return []
@@ -234,7 +275,7 @@ class OllamaService:
             },
         )
 
-        return response["message"]["content"]
+        return _extract_content(response)
 
     def _merge_summaries(
         self,
@@ -285,7 +326,7 @@ class OllamaService:
                     "num_ctx": 8192,
                 },
             )
-            body = response["message"]["content"]
+            body = _extract_content(response)
         else:
             # Document too large for a unification pass – concatenate directly
             body = combined
