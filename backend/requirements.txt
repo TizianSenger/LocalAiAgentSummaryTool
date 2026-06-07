@@ -1,0 +1,16 @@
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+aiofiles>=23.2.1
+pydantic>=2.0.0
+
+# PDF to Markdown conversion (prefers GPU via CUDA if available)
+marker-pdf>=0.2.0
+pymupdf>=1.23.0
+pymupdf4llm>=0.0.5
+
+# Image handling
+Pillow>=10.0.0
+
+# Ollama AI client
+ollama>=0.1.7

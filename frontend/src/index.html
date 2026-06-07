@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudyScript AI</title>
+  <link rel="stylesheet" href="styles/main.css" />
+
+  <!-- anime.js for animations -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+  <!-- marked.js for Markdown preview rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     LOADING SCREEN  –  shown while the Python backend starts up
+═══════════════════════════════════════════════════════════════════════ -->
+<div id="loading-screen">
+  <div class="loading-content">
+    <div class="loader-orb"></div>
+    <h2 class="loading-title">StudyScript <span class="accent">AI</span></h2>
+    <p class="loading-subtitle" id="loading-message">Starte Backend…</p>
+    <div class="loading-dots">
+      <span></span><span></span><span></span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     MAIN APP SHELL  –  hidden until backend is ready
+═══════════════════════════════════════════════════════════════════════ -->
+<div id="app" class="hidden">
+
+  <!-- Custom title bar (frame: false in Electron) -->
+  <div class="titlebar">
+    <div class="titlebar-drag-area">
+      <span class="titlebar-logo">⬡</span>
+      <span class="titlebar-app-name">StudyScript AI</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="tb-btn tb-minimize" onclick="window.electronAPI.minimize()">—</button>
+      <button class="tb-btn tb-maximize" onclick="window.electronAPI.maximize()">□</button>
+      <button class="tb-btn tb-close"    onclick="window.electronAPI.close()">✕</button>
+    </div>
+  </div>
+
+  <!-- ── Sidebar ──────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <nav class="sidebar-nav">
+      <button class="nav-btn active" data-view="home" id="nav-home">
+        <span class="nav-icon">⊞</span>
+        <span class="nav-label">Übersicht</span>
+      </button>
+    </nav>
+
+    <!-- Folder list in sidebar -->
+    <div class="sidebar-section-title">Meine Ordner</div>
+    <div class="sidebar-folders" id="sidebar-folder-list">
+      <!-- Filled dynamically by app.js -->
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="version-badge">v1.0 · Lernfach</div>
+    </div>
+  </aside>
+
+  <!-- ── Main content area ─────────────────────────────────────────────── -->
+  <main class="main-content" id="main-content">
+
+    <!-- HOME VIEW: grid of folder cards -->
+    <section class="view" id="view-home">
+      <div class="view-header">
+        <div>
+          <h1 class="view-title">Meine Lernordner</h1>
+          <p class="view-subtitle">Erstelle einen Ordner und lade dein Uni-Script hoch.</p>
+        </div>
+        <button class="btn btn-primary glow-btn" id="btn-create-folder">
+          <span class="btn-icon">+</span>
+          Neuer Ordner
+        </button>
+      </div>
+
+      <div class="folder-grid" id="folder-grid">
+        <!-- Folder cards rendered by app.js -->
+        <div class="folder-grid-empty hidden" id="folder-grid-empty">
+          <div class="empty-icon">📂</div>
+          <p>Noch keine Ordner vorhanden.</p>
+          <p class="muted">Klicke auf „Neuer Ordner" um zu starten.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOLDER DETAIL VIEW: upload → convert → summarize -->
+    <section class="view hidden" id="view-folder">
+      <div class="view-header">
+        <button class="btn-back" id="btn-back">
+          ← Zurück
+        </button>
+        <div class="folder-detail-header">
+          <span class="folder-type-badge" id="detail-type-badge">Lernfach</span>
+          <h1 class="view-title" id="detail-folder-name">Ordnername</h1>
+        </div>
+        <button class="btn btn-ghost" id="btn-open-settings">
+          ⚙ Einstellungen
+        </button>
+      </div>
+
+      <!-- Step indicators -->
+      <div class="steps-row">
+        <div class="step" id="step-upload">
+          <div class="step-circle">1</div>
+          <span>PDF hochladen</span>
+        </div>
+        <div class="step-connector"></div>
+        <div class="step" id="step-convert">
+          <div class="step-circle">2</div>
+          <span>Konvertieren</span>
+        </div>
+        <div class="step-connector"></div>
+        <div class="step" id="step-summarize">
+          <div class="step-circle">3</div>
+          <span>Zusammenfassen</span>
+        </div>
+      </div>
+
+      <!-- Upload area -->
+      <div class="card upload-card" id="upload-area">
+        <div class="upload-icon" id="upload-icon">📄</div>
+        <p class="upload-text" id="upload-text">PDF hierher ziehen oder klicken</p>
+        <p class="muted" id="upload-subtext">Unterstützt akademische Skripte mit Formeln, Tabellen, Code &amp; Bildern</p>
+        <input type="file" id="file-input" accept=".pdf" class="hidden" />
+        <button class="btn btn-primary" id="btn-upload" style="margin-top:16px">
+          PDF auswählen
+        </button>
+      </div>
+
+      <!-- Progress bar (hidden until an operation runs) -->
+      <div class="progress-container hidden" id="progress-container">
+        <div class="progress-header">
+          <span class="progress-label" id="progress-label">Konvertiere PDF…</span>
+          <span class="progress-percent" id="progress-percent">0%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <p class="progress-message muted" id="progress-message"></p>
+      </div>
+
+      <!-- Action buttons row -->
+      <div class="action-row">
+        <button class="btn btn-secondary" id="btn-convert" disabled>
+          <span class="btn-icon">⟳</span> In Markdown konvertieren
+        </button>
+        <button class="btn btn-accent" id="btn-summarize" disabled>
+          <span class="btn-icon">✦</span> KI-Zusammenfassung erstellen
+        </button>
+      </div>
+
+      <!-- Content tabs -->
+      <div class="content-tabs hidden" id="content-tabs">
+        <button class="tab-btn active" data-tab="markdown">Konvertiertes Markdown</button>
+        <button class="tab-btn"        data-tab="summary">Zusammenfassung</button>
+      </div>
+
+      <!-- Markdown preview -->
+      <div class="content-panel hidden" id="panel-markdown">
+        <div class="markdown-viewer" id="markdown-viewer"></div>
+      </div>
+
+      <!-- Summary preview -->
+      <div class="content-panel hidden" id="panel-summary">
+        <div class="markdown-viewer" id="summary-viewer"></div>
+      </div>
+    </section>
+
+  </main><!-- /main-content -->
+
+</div><!-- /app -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     MODAL – Create folder
+═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-overlay hidden" id="modal-create">
+  <div class="modal">
+    <h2 class="modal-title">Neuen Ordner erstellen</h2>
+    <label class="form-label">Ordnername</label>
+    <input
+      type="text"
+      class="form-input"
+      id="input-folder-name"
+      placeholder="z.B. Mathematik 2, Physik Grundlagen…"
+      maxlength="80"
+    />
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btn-modal-cancel">Abbrechen</button>
+      <button class="btn btn-primary" id="btn-modal-confirm">Erstellen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     SETTINGS PANEL – slides in from the right
+═══════════════════════════════════════════════════════════════════════ -->
+<div class="settings-overlay hidden" id="settings-overlay">
+  <div class="settings-panel" id="settings-panel">
+    <div class="settings-header">
+      <h2>⚙ KI-Einstellungen</h2>
+      <button class="btn-icon-only" id="btn-close-settings">✕</button>
+    </div>
+
+    <div class="settings-body">
+
+      <!-- Ollama Model -->
+      <div class="settings-section">
+        <label class="settings-label">Ollama Modell</label>
+        <select class="form-select" id="settings-model">
+          <option value="">Lade Modelle…</option>
+        </select>
+        <p class="settings-hint">Alle lokal installierten Ollama-Modelle werden hier angezeigt.</p>
+      </div>
+
+      <!-- System Prompt -->
+      <div class="settings-section">
+        <label class="settings-label">System-Prompt</label>
+        <textarea
+          class="form-textarea"
+          id="settings-system-prompt"
+          rows="8"
+          placeholder="Instruktionen für die KI…"
+        ></textarea>
+        <p class="settings-hint">
+          Beschreibe der KI, wie sie das Script zusammenfassen soll.
+          Variablen: {length} = gewählte Länge
+        </p>
+      </div>
+
+      <!-- Summary Length -->
+      <div class="settings-section">
+        <label class="settings-label">Länge der Zusammenfassung</label>
+        <div class="length-options">
+          <label class="length-option">
+            <input type="radio" name="summary-length" value="short" />
+            <span class="length-card">
+              <span class="length-title">Kurz</span>
+              <span class="length-desc">~20%</span>
+            </span>
+          </label>
+          <label class="length-option">
+            <input type="radio" name="summary-length" value="medium" checked />
+            <span class="length-card">
+              <span class="length-title">Mittel</span>
+              <span class="length-desc">~40%</span>
+            </span>
+          </label>
+          <label class="length-option">
+            <input type="radio" name="summary-length" value="long" />
+            <span class="length-card">
+              <span class="length-title">Lang</span>
+              <span class="length-desc">~60%</span>
+            </span>
+          </label>
+          <label class="length-option">
+            <input type="radio" name="summary-length" value="comprehensive" />
+            <span class="length-card">
+              <span class="length-title">Vollständig</span>
+              <span class="length-desc">~80%</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Temperature -->
+      <div class="settings-section">
+        <label class="settings-label">
+          Temperatur: <span id="temp-display">0.3</span>
+        </label>
+        <input type="range" class="form-range" id="settings-temperature"
+               min="0" max="1" step="0.05" value="0.3" />
+        <p class="settings-hint">
+          0 = präzise &amp; faktisch · 1 = kreativ &amp; variiert
+        </p>
+      </div>
+
+      <!-- Chunk size -->
+      <div class="settings-section">
+        <label class="settings-label">Chunk-Größe (Zeichen)</label>
+        <input type="number" class="form-input" id="settings-chunk-size"
+               min="500" max="10000" step="500" value="3000" />
+        <p class="settings-hint">
+          Wie viele Zeichen pro KI-Anfrage. Größere Chunks = mehr Kontext,
+          aber langsamer.
+        </p>
+      </div>
+
+      <!-- Include toggles -->
+      <div class="settings-section">
+        <label class="settings-label">Inhalte einbeziehen</label>
+        <div class="toggle-grid">
+          <label class="toggle-item">
+            <input type="checkbox" id="include-images" checked />
+            <span class="toggle-slider"></span>
+            <span>Bilder</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" id="include-tables" checked />
+            <span class="toggle-slider"></span>
+            <span>Tabellen</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" id="include-formulas" checked />
+            <span class="toggle-slider"></span>
+            <span>Formeln</span>
+          </label>
+          <label class="toggle-item">
+            <input type="checkbox" id="include-code" checked />
+            <span class="toggle-slider"></span>
+            <span>Code</span>
+          </label>
+        </div>
+      </div>
+
+    </div><!-- /settings-body -->
+
+    <div class="settings-footer">
+      <button class="btn btn-ghost" id="btn-settings-reset">Zurücksetzen</button>
+      <button class="btn btn-primary" id="btn-settings-save">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TOAST notification
+═══════════════════════════════════════════════════════════════════════ -->
+<div class="toast hidden" id="toast">
+  <span id="toast-message"></span>
+</div>
+
+<!-- Scripts -->
+<script src="scripts/api.js"></script>
+<script src="scripts/animations.js"></script>
+<script src="scripts/app.js"></script>
+</body>
+</html>
