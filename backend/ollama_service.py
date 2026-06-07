@@ -439,15 +439,28 @@ class OllamaService:
             "Antworte ausschließlich mit dem zusammengefassten Markdown. "
             "Keine Einleitung, keine Erklärung – direkt das Markdown."
         )
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model=settings.get("claude_model", "claude-haiku-4-5-20251001"),
-            max_tokens=4096,
-            temperature=settings.get("temperature", 0.3),
-            system=settings.get("system_prompt", ""),
-            messages=[{"role": "user", "content": user_msg}],
-        )
-        return message.content[0].text
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            message = client.messages.create(
+                model=settings.get("claude_model", "claude-haiku-4-5-20251001"),
+                max_tokens=4096,
+                temperature=settings.get("temperature", 0.3),
+                system=settings.get("system_prompt", ""),
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            return message.content[0].text
+        except anthropic.AuthenticationError:
+            raise RuntimeError("Claude API: Ungültiger API Key. Bitte .env prüfen.")
+        except anthropic.BadRequestError as e:
+            if "credit" in str(e).lower() or "balance" in str(e).lower():
+                raise RuntimeError(
+                    "Claude API: Kein Guthaben. Bitte unter console.anthropic.com aufladen."
+                )
+            raise RuntimeError(f"Claude API Fehler: {e}")
+        except anthropic.RateLimitError:
+            raise RuntimeError("Claude API: Rate Limit erreicht. Bitte kurz warten.")
+        except Exception as e:
+            raise RuntimeError(f"Claude API nicht erreichbar: {e}")
 
     def _merge_summaries(self, summaries: list[str], settings: dict, title: str) -> str:
         """Route final merge to Ollama or Claude based on ai_provider setting."""
@@ -533,15 +546,28 @@ class OllamaService:
                 f"{combined}\n\n"
                 "Antworte nur mit dem finalen Markdown-Dokument."
             )
-            client = anthropic.Anthropic(api_key=api_key)
-            message = client.messages.create(
-                model=settings.get("claude_model", "claude-haiku-4-5-20251001"),
-                max_tokens=8192,
-                temperature=settings.get("temperature", 0.3),
-                system=settings.get("system_prompt", ""),
-                messages=[{"role": "user", "content": merge_prompt}],
-            )
-            body = message.content[0].text
+            try:
+                client = anthropic.Anthropic(api_key=api_key)
+                message = client.messages.create(
+                    model=settings.get("claude_model", "claude-haiku-4-5-20251001"),
+                    max_tokens=8192,
+                    temperature=settings.get("temperature", 0.3),
+                    system=settings.get("system_prompt", ""),
+                    messages=[{"role": "user", "content": merge_prompt}],
+                )
+                body = message.content[0].text
+            except anthropic.AuthenticationError:
+                raise RuntimeError("Claude API: Ungültiger API Key. Bitte .env prüfen.")
+            except anthropic.BadRequestError as e:
+                if "credit" in str(e).lower() or "balance" in str(e).lower():
+                    raise RuntimeError(
+                        "Claude API: Kein Guthaben. Bitte unter console.anthropic.com aufladen."
+                    )
+                raise RuntimeError(f"Claude API Fehler: {e}")
+            except anthropic.RateLimitError:
+                raise RuntimeError("Claude API: Rate Limit erreicht. Bitte kurz warten.")
+            except Exception as e:
+                raise RuntimeError(f"Claude API nicht erreichbar: {e}")
         else:
             body = combined
 
