@@ -11,11 +11,29 @@ marker-pdf uses deep-learning models that run on GPU (CUDA) and accurately handl
 Because model loading and PDF processing are CPU/GPU-bound and can take minutes
 for large documents, all blocking work runs in a thread-pool executor so the
 FastAPI event loop stays responsive during conversion.
+
+Progress reporting: a parallel async ticker advances the progress bar through
+realistic stage labels while the blocking conversion runs. The interval between
+stages is estimated from the page count (~0.35 s per page per stage).
 """
 import asyncio
 import shutil
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
+
+# Ordered conversion stages shown in the progress bar.
+# Percentages run from 10 % (after model load) to 93 % (before "done").
+_STAGES: list[tuple[int, str]] = [
+    (10, "Analysiere PDF-Struktur und Seiten-Layout…"),
+    (20, "Erkenne Überschriften und Textblöcke…"),
+    (32, "Extrahiere und interpretiere Fließtext…"),
+    (44, "Verarbeite mathematische Formeln (LaTeX)…"),
+    (56, "Erkenne Tabellen und wandle sie um…"),
+    (66, "Identifiziere Code-Blöcke und Syntax…"),
+    (76, "Extrahiere eingebettete Bilder…"),
+    (86, "Generiere Markdown-Dokument…"),
+    (93, "Speichere Ausgabe auf Festplatte…"),
+]
 
 
 class PDFConverter:
@@ -37,6 +55,9 @@ class PDFConverter:
         Output is written to:
             converted/{stem}.md        ← full Markdown document
             converted/images/*.png     ← extracted images referenced in the Markdown
+
+        A parallel ticker task advances the progress bar through realistic stage
+        labels while the blocking conversion runs in a thread-pool executor.
 
         Args:
             safe_name:  Filesystem-safe folder name
@@ -65,20 +86,35 @@ class PDFConverter:
             shutil.rmtree(images_dir)
         images_dir.mkdir(parents=True)
 
-        await self._emit(progress, 5, "Lade KI-Modelle in den GPU-Speicher…")
+        # Read page count up front so the ticker can estimate timing
+        page_count = self._get_page_count(pdf_path)
 
-        # Run the blocking conversion off the event loop
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            self._convert_blocking,
-            pdf_path,
-            md_path,
-            images_dir,
-            progress,   # passed for synchronous logging only; async calls happen above/below
+        await self._emit(progress, 5, f"Lade KI-Modelle… ({page_count} Seiten erkannt)")
+
+        # Start the progress ticker in the background, then run the blocking conversion
+        ticker = asyncio.create_task(self._progress_ticker(progress, page_count))
+
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._convert_blocking,
+                pdf_path,
+                md_path,
+                images_dir,
+            )
+        finally:
+            # Always stop the ticker, whether conversion succeeded or raised
+            ticker.cancel()
+            try:
+                await ticker
+            except asyncio.CancelledError:
+                pass
+
+        await self._emit(
+            progress, 100,
+            f"Fertig! {result['pages_count']} Seiten, {result['images_count']} Bilder extrahiert."
         )
-
-        await self._emit(progress, 100, "Konvertierung abgeschlossen!")
 
         return {
             "message": "PDF erfolgreich in Markdown konvertiert.",
@@ -86,6 +122,36 @@ class PDFConverter:
             "images_count": result["images_count"],
             "pages_count": result["pages_count"],
         }
+
+    # ------------------------------------------------------------------
+    # Progress ticker (runs in async context while conversion blocks)
+    # ------------------------------------------------------------------
+
+    async def _progress_ticker(
+        self,
+        progress: Optional[Callable[[int, str], Awaitable[None]]],
+        page_count: int,
+    ):
+        """
+        Advance the progress bar through predefined stages while the blocking
+        conversion runs in a thread-pool executor.
+
+        The interval between stages is estimated from the page count so the bar
+        moves at a natural pace regardless of document length:
+          50 pages  → ~3 s per stage
+          172 pages → ~10 s per stage
+          500 pages → ~30 s per stage
+        """
+        # Rough estimate: marker-pdf needs ~0.25 s per page per stage on GPU
+        seconds_per_stage = max(3.0, page_count * 0.25)
+
+        for percent, message in _STAGES:
+            await self._emit(progress, percent, message)
+            try:
+                await asyncio.sleep(seconds_per_stage)
+            except asyncio.CancelledError:
+                # Conversion finished – stop updating silently
+                return
 
     # ------------------------------------------------------------------
     # Blocking conversion (runs in thread pool)
@@ -96,7 +162,6 @@ class PDFConverter:
         pdf_path: Path,
         md_path: Path,
         images_dir: Path,
-        progress,   # not awaitable here – only used for sync logging
     ) -> dict:
         """
         Attempt conversion with marker-pdf; fall back to pymupdf4llm if it fails.
@@ -124,10 +189,7 @@ class PDFConverter:
 
         The resulting Markdown and images are written to disk.
         """
-        import fitz  # PyMuPDF – used only for page count here
-
-        with fitz.open(str(pdf_path)) as doc:
-            pages_count = len(doc)
+        pages_count = self._get_page_count(pdf_path)
 
         try:
             # --- marker v1.x API ---
@@ -154,7 +216,7 @@ class PDFConverter:
         # Save extracted images and fix their relative paths in the Markdown
         for img_name, img_obj in images.items():
             img_obj.save(str(images_dir / img_name))
-            # marker writes bare filenames; prefix them so they resolve from the .md location
+            # marker writes bare filenames; prefix so they resolve from the .md location
             full_text = full_text.replace(f"({img_name})", f"(images/{img_name})")
 
         md_path.write_text(full_text, encoding="utf-8")
@@ -171,11 +233,9 @@ class PDFConverter:
         Quality is good for text, tables, and images but less accurate for
         complex math formulas (they become plain text instead of LaTeX).
         """
-        import fitz
         import pymupdf4llm
 
-        with fitz.open(str(pdf_path)) as doc:
-            pages_count = len(doc)
+        pages_count = self._get_page_count(pdf_path)
 
         md_text = pymupdf4llm.to_markdown(
             str(pdf_path),
@@ -190,8 +250,15 @@ class PDFConverter:
         return {"images_count": images_count, "pages_count": pages_count}
 
     # ------------------------------------------------------------------
-    # Helper
+    # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_page_count(pdf_path: Path) -> int:
+        """Return the number of pages in a PDF using PyMuPDF."""
+        import fitz
+        with fitz.open(str(pdf_path)) as doc:
+            return len(doc)
 
     @staticmethod
     async def _emit(
