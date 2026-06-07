@@ -9,8 +9,9 @@ marker-pdf>=0.2.0
 pymupdf>=1.23.0
 pymupdf4llm>=0.0.5
 
-# Image handling
-Pillow>=10.0.0
+# Image handling – Pillow>=12.0.0 hat vorgefertigte Binaries fuer Python 3.14 (cp314)
+# Aeltere Versionen haben keine cp314-Wheels und koennen nicht from-source gebaut werden
+Pillow>=12.0.0
 
 # Ollama AI client
 ollama>=0.1.7
