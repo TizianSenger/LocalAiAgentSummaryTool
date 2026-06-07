@@ -26,25 +26,42 @@ let pythonProcess = null;
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve the Python executable to use.
- * Prefers specific versions compatible with all dependencies (3.11 > 3.12 > 3.13).
- * Falls back to the generic 'py' launcher or 'python3'/'python'.
+ * Resolve the Python executable and arguments to use.
+ * Returns { exe, args } so spawn() gets them separately.
+ *
+ * spawn() does NOT use a shell, so 'py -3.11' as a single string fails –
+ * the executable must be 'py' and '-3.11' must be a separate argument.
+ *
+ * Priority: py -3.11 → py -3.12 → py -3.13 → plain py → python3 → python
  */
-function findPythonCmd() {
+function findPython() {
     const { execSync } = require('child_process');
 
-    // Versioned py-launcher calls (Windows) – avoids Python 3.14 Pillow issues
-    const candidates = process.platform === 'win32'
-        ? ['py -3.11', 'py -3.12', 'py -3.13', 'py', 'python3', 'python']
-        : ['python3.11', 'python3.12', 'python3', 'python'];
-
-    for (const cmd of candidates) {
-        try {
-            execSync(`${cmd} --version`, { stdio: 'ignore' });
-            return cmd;
-        } catch { /* not found – try next */ }
+    if (process.platform === 'win32') {
+        // Try versioned Windows py-launcher entries
+        for (const ver of ['3.11', '3.12', '3.13']) {
+            try {
+                execSync(`py -${ver} --version`, { stdio: 'ignore' });
+                return { exe: 'py', args: [`-${ver}`] };
+            } catch { /* version not installed */ }
+        }
+        // Fallback: unversioned py, then python
+        for (const exe of ['py', 'python3', 'python']) {
+            try {
+                execSync(`${exe} --version`, { stdio: 'ignore' });
+                return { exe, args: [] };
+            } catch { }
+        }
+    } else {
+        for (const exe of ['python3.11', 'python3.12', 'python3', 'python']) {
+            try {
+                execSync(`${exe} --version`, { stdio: 'ignore' });
+                return { exe, args: [] };
+            } catch { }
+        }
     }
-    return 'py'; // last resort
+
+    return { exe: 'py', args: [] }; // last resort
 }
 
 /**
@@ -52,9 +69,9 @@ function findPythonCmd() {
  * stdout/stderr are piped so logs appear in the Electron dev console.
  */
 function startBackend() {
-    const pythonCmd = findPythonCmd();
+    const { exe, args } = findPython();
 
-    pythonProcess = spawn(pythonCmd, [BACKEND_SCRIPT], {
+    pythonProcess = spawn(exe, [...args, BACKEND_SCRIPT], {
         cwd: path.dirname(BACKEND_SCRIPT),
         stdio: ['ignore', 'pipe', 'pipe'],
     });
