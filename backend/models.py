@@ -37,7 +37,9 @@ class FolderSettings(BaseModel):
     Per-folder AI summarization settings stored in settings.json.
     All fields have sensible defaults so new folders work out of the box.
     """
-    ollama_model: str = "llama3.1"
+    ai_provider: str = "ollama"               # "ollama" | "claude"
+    ollama_model: str = "qwen2.5:14b"
+    claude_model: str = "claude-haiku-4-5-20251001"
     system_prompt: str = ""
     summary_length: str = Field(
         default="medium",

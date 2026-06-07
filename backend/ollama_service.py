@@ -140,7 +140,8 @@ class OllamaService:
         chunks = self._split_into_chunks(md_content, settings.get("chunk_size", 3000))
         total = len(chunks)
 
-        await self._emit(progress, 10, f"Dokument hat {total} Abschnitte – starte KI-Verarbeitung…")
+        provider_label = "Claude API" if settings.get("ai_provider") == "claude" else f"Ollama ({settings.get('ollama_model', 'qwen2.5:14b')})"
+        await self._emit(progress, 10, f"Dokument hat {total} Abschnitte – starte KI-Verarbeitung via {provider_label}…")
 
         # Summarize each chunk (blocking Ollama calls run off the event loop)
         loop = asyncio.get_event_loop()
@@ -386,49 +387,76 @@ class OllamaService:
         chunk_number: int,
         total_chunks: int,
     ) -> str:
-        """
-        Send one Markdown chunk to Ollama and return the summarized Markdown.
+        """Route chunk summarization to Ollama or Claude based on ai_provider setting."""
+        if settings.get("ai_provider", "ollama") == "claude":
+            return self._summarize_chunk_claude(chunk, settings, chunk_number, total_chunks)
+        return self._summarize_chunk_ollama(chunk, settings, chunk_number, total_chunks)
 
-        Args:
-            chunk:        Raw Markdown text for this section
-            settings:     AI settings from settings.json
-            chunk_number: 1-based index (tells the model where it is in the doc)
-            total_chunks: Total number of chunks (gives the model full context)
-
-        Returns:
-            Summarized Markdown string
-        """
+    @staticmethod
+    def _summarize_chunk_ollama(
+        chunk: str, settings: dict, chunk_number: int, total_chunks: int
+    ) -> str:
+        """Summarize one chunk via local Ollama model."""
         import ollama
 
         length_hint = _LENGTH_INSTRUCTIONS.get(
-            settings.get("summary_length", "medium"),
-            _LENGTH_INSTRUCTIONS["medium"],
+            settings.get("summary_length", "medium"), _LENGTH_INSTRUCTIONS["medium"]
         )
-
         user_msg = (
             f"Hier ist Abschnitt {chunk_number} von {total_chunks} eines Lernscripts:\n\n"
-            f"---\n{chunk}\n---\n\n"
-            f"{length_hint}\n\n"
+            f"---\n{chunk}\n---\n\n{length_hint}\n\n"
             "Antworte ausschließlich mit dem zusammengefassten Markdown. "
             "Keine Einleitung, keine Erklärung – direkt das Markdown."
         )
-
         response = ollama.chat(
-            model=settings.get("ollama_model", "llama3.1"),
+            model=settings.get("ollama_model", "qwen2.5:14b"),
             messages=[
                 {"role": "system", "content": settings.get("system_prompt", "")},
                 {"role": "user",   "content": user_msg},
             ],
-            options={
-                "temperature": settings.get("temperature", 0.3),
-                "num_ctx": 8192,
-            },
+            options={"temperature": settings.get("temperature", 0.3), "num_ctx": 8192},
         )
-
         return _extract_content(response)
 
-    def _merge_summaries(
-        self,
+    @staticmethod
+    def _summarize_chunk_claude(
+        chunk: str, settings: dict, chunk_number: int, total_chunks: int
+    ) -> str:
+        """Summarize one chunk via Anthropic Claude API."""
+        import os
+        import anthropic
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key or api_key == "dein-api-key-hier":
+            raise RuntimeError("ANTHROPIC_API_KEY nicht in .env konfiguriert.")
+
+        length_hint = _LENGTH_INSTRUCTIONS.get(
+            settings.get("summary_length", "medium"), _LENGTH_INSTRUCTIONS["medium"]
+        )
+        user_msg = (
+            f"Hier ist Abschnitt {chunk_number} von {total_chunks} eines Lernscripts:\n\n"
+            f"---\n{chunk}\n---\n\n{length_hint}\n\n"
+            "Antworte ausschließlich mit dem zusammengefassten Markdown. "
+            "Keine Einleitung, keine Erklärung – direkt das Markdown."
+        )
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model=settings.get("claude_model", "claude-haiku-4-5-20251001"),
+            max_tokens=4096,
+            temperature=settings.get("temperature", 0.3),
+            system=settings.get("system_prompt", ""),
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        return message.content[0].text
+
+    def _merge_summaries(self, summaries: list[str], settings: dict, title: str) -> str:
+        """Route final merge to Ollama or Claude based on ai_provider setting."""
+        if settings.get("ai_provider", "ollama") == "claude":
+            return self._merge_summaries_claude(summaries, settings, title)
+        return self._merge_summaries_ollama(summaries, settings, title)
+
+    @staticmethod
+    def _merge_summaries_ollama(
         summaries: list[str],
         settings: dict,
         title: str,
@@ -479,6 +507,42 @@ class OllamaService:
             body = _extract_content(response)
         else:
             # Document too large for a unification pass – concatenate directly
+            body = combined
+
+        return f"# Zusammenfassung: {title}\n\n{body}"
+
+    @staticmethod
+    def _merge_summaries_claude(summaries: list[str], settings: dict, title: str) -> str:
+        """Merge chunk summaries into one document using Claude API."""
+        import os
+        import anthropic
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key or api_key == "dein-api-key-hier":
+            raise RuntimeError("ANTHROPIC_API_KEY nicht in .env konfiguriert.")
+
+        combined = "\n\n---\n\n".join(summaries)
+
+        if len(combined) < 20_000:
+            merge_prompt = (
+                "Das sind die Teilzusammenfassungen eines Lernscripts. "
+                "Erstelle daraus ein einheitliches, gut strukturiertes Lerndokument.\n"
+                "- Füge ein Markdown-Inhaltsverzeichnis am Anfang ein\n"
+                "- Entferne Duplikate und verbinde verwandte Themen\n"
+                "- Behalte Formeln, Tabellen und Codeblöcke bei\n\n"
+                f"{combined}\n\n"
+                "Antworte nur mit dem finalen Markdown-Dokument."
+            )
+            client = anthropic.Anthropic(api_key=api_key)
+            message = client.messages.create(
+                model=settings.get("claude_model", "claude-haiku-4-5-20251001"),
+                max_tokens=8192,
+                temperature=settings.get("temperature", 0.3),
+                system=settings.get("system_prompt", ""),
+                messages=[{"role": "user", "content": merge_prompt}],
+            )
+            body = message.content[0].text
+        else:
             body = combined
 
         return f"# Zusammenfassung: {title}\n\n{body}"

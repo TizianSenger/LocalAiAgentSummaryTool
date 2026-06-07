@@ -99,13 +99,14 @@ const dom = {
     inputFolderName:$('input-folder-name'),
 
     // Settings
-    settingsOverlay:     $('settings-overlay'),
-    settingsPanel:       $('settings-panel'),
-    settingsModel:       $('settings-model'),
-    settingsPrompt:      $('settings-system-prompt'),
-    settingsChunkSize:   $('settings-chunk-size'),
-    settingsTemperature: $('settings-temperature'),
-    tempDisplay:         $('temp-display'),
+    settingsOverlay:      $('settings-overlay'),
+    settingsPanel:        $('settings-panel'),
+    settingsModel:        $('settings-model'),
+    settingsClaudeModel:  $('settings-claude-model'),
+    settingsPrompt:       $('settings-system-prompt'),
+    settingsChunkSize:    $('settings-chunk-size'),
+    settingsTemperature:  $('settings-temperature'),
+    tempDisplay:          $('temp-display'),
     useVision:              $('use-vision'),
     visionConfig:           $('vision-config'),
     settingsVisionModel:    $('settings-vision-model'),
@@ -576,8 +577,21 @@ function _escapeHtml(str) {
 // Vision provider tab switch
 // ─────────────────────────────────────────────────────────────────────────────
 
+function _switchAiProviderTab(provider) {
+    $('ai-provider-tabs').querySelectorAll('.vision-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.provider === provider);
+    });
+    $('ai-content-ollama').classList.toggle('hidden', provider !== 'ollama');
+    $('ai-content-claude').classList.toggle('hidden', provider !== 'claude');
+}
+
+function _activeAiProvider() {
+    const active = $('ai-provider-tabs').querySelector('.vision-tab.active');
+    return active ? active.dataset.provider : 'ollama';
+}
+
 function _switchVisionTab(provider) {
-    document.querySelectorAll('.vision-tab').forEach(t => {
+    $('vision-tabs').querySelectorAll('.vision-tab').forEach(t => {
         t.classList.toggle('active', t.dataset.provider === provider);
     });
     $('vision-content-ollama').classList.toggle('hidden', provider !== 'ollama');
@@ -585,7 +599,7 @@ function _switchVisionTab(provider) {
 }
 
 function _activeVisionProvider() {
-    const active = document.querySelector('.vision-tab.active');
+    const active = $('vision-tabs').querySelector('.vision-tab.active');
     return active ? active.dataset.provider : 'ollama';
 }
 
@@ -761,9 +775,11 @@ async function _openSettings() {
         ? models.map(m => `<option value="${_esc(m.name)}">${_esc(m.name)} (${m.size_gb} GB)</option>`).join('')
         : '<option value="">Keine Modelle gefunden</option>';
 
-    if (settings.ollama_model) {
-        dom.settingsModel.value = settings.ollama_model;
-    }
+    // AI provider tabs
+    const aiProvider = settings.ai_provider ?? 'ollama';
+    _switchAiProviderTab(aiProvider);
+    if (settings.ollama_model) dom.settingsModel.value = settings.ollama_model;
+    if (settings.claude_model) dom.settingsClaudeModel.value = settings.claude_model;
 
     dom.settingsPrompt.value       = settings.system_prompt    ?? '';
     dom.settingsChunkSize.value    = settings.chunk_size       ?? 3000;
@@ -803,7 +819,9 @@ async function _saveSettings() {
     const selectedLength = document.querySelector('input[name="summary-length"]:checked');
 
     const settings = {
+        ai_provider:      _activeAiProvider(),
         ollama_model:     dom.settingsModel.value,
+        claude_model:     dom.settingsClaudeModel.value,
         system_prompt:    dom.settingsPrompt.value,
         summary_length:   selectedLength ? selectedLength.value : 'medium',
         temperature:      parseFloat(dom.settingsTemperature.value),
@@ -920,8 +938,13 @@ function _wireUIEvents() {
         dom.visionConfig.classList.toggle('hidden', !dom.useVision.checked);
     });
 
+    // AI provider tabs
+    $('ai-provider-tabs').querySelectorAll('.vision-tab').forEach(tab => {
+        tab.addEventListener('click', () => _switchAiProviderTab(tab.dataset.provider));
+    });
+
     // Vision provider tabs
-    document.querySelectorAll('.vision-tab').forEach(tab => {
+    $('vision-tabs').querySelectorAll('.vision-tab').forEach(tab => {
         tab.addEventListener('click', () => _switchVisionTab(tab.dataset.provider));
     });
 

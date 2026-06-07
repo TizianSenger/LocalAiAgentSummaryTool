@@ -243,13 +243,35 @@
 
     <div class="settings-body">
 
-      <!-- Ollama Model -->
+      <!-- AI Provider -->
       <div class="settings-section">
-        <label class="settings-label">Ollama Modell</label>
-        <select class="form-select" id="settings-model">
-          <option value="">Lade Modelle…</option>
-        </select>
-        <p class="settings-hint">Alle lokal installierten Ollama-Modelle werden hier angezeigt.</p>
+        <label class="settings-label">KI-Anbieter &amp; Modell</label>
+
+        <div class="vision-tabs" id="ai-provider-tabs">
+          <button class="vision-tab active" data-provider="ollama">🖥 Lokal (Ollama)</button>
+          <button class="vision-tab" data-provider="claude">✦ Claude API</button>
+        </div>
+
+        <!-- Ollama tab -->
+        <div class="vision-tab-content" id="ai-content-ollama">
+          <select class="form-select" id="settings-model">
+            <option value="">Lade Modelle…</option>
+          </select>
+          <p class="settings-hint">
+            Empfohlen: <code>qwen2.5:14b</code> · Alternativ: <code>qwen2.5:7b</code> · <code>gemma2:9b</code>
+          </p>
+        </div>
+
+        <!-- Claude API tab -->
+        <div class="vision-tab-content hidden" id="ai-content-claude">
+          <select class="form-select" id="settings-claude-model">
+            <option value="claude-haiku-4-5-20251001">Claude Haiku – schnell &amp; günstig</option>
+            <option value="claude-sonnet-4-6">Claude Sonnet – beste Qualität</option>
+          </select>
+          <p class="settings-hint">
+            API Key aus <code>.env</code> · Haiku ~$0.80/1M Tokens · Sonnet ~$3/1M Tokens
+          </p>
+        </div>
       </div>
 
       <!-- System Prompt -->

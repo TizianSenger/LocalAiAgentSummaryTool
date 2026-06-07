@@ -34,21 +34,25 @@ class SettingsManager:
         These are also used as fallback values when loading a partial settings file.
         """
         return {
-            "ollama_model": "qwen2.5:14b",
-            "system_prompt": _DEFAULT_SYSTEM_PROMPT,
-            "summary_length": "medium",   # short | medium | long | comprehensive
-            "language": "de",
-            "include_images": True,
-            "include_tables": True,
+            # ── Main AI provider ────────────────────────────────────────────
+            "ai_provider":  "ollama",               # "ollama" | "claude"
+            "ollama_model": "qwen2.5:14b",          # used when ai_provider = ollama
+            "claude_model": "claude-haiku-4-5-20251001",  # used when ai_provider = claude
+            # ── Prompt & style ──────────────────────────────────────────────
+            "system_prompt":   _DEFAULT_SYSTEM_PROMPT,
+            "summary_length":  "medium",            # short | medium | long | comprehensive
+            "language":        "de",
+            "include_images":  True,
+            "include_tables":  True,
             "include_formulas": True,
-            "include_code": True,
-            "chunk_size": 3000,           # characters per summarization chunk
-            "temperature": 0.3,           # low = more factual, high = more creative
-            # Vision: image analysis before summarization
-            "use_vision": False,
-            "vision_provider": "ollama",            # "ollama" | "claude"
-            "vision_model": "llama3.2-vision:11b",  # Ollama vision model
-            "claude_vision_model": "claude-haiku-4-5-20251001",  # Claude model for vision
+            "include_code":    True,
+            "chunk_size":      3000,                # characters per summarization chunk
+            "temperature":     0.3,                 # 0 = factual, 1 = creative
+            # ── Vision (image analysis before summarization) ─────────────────
+            "use_vision":          False,
+            "vision_provider":     "ollama",        # "ollama" | "claude"
+            "vision_model":        "llama3.2-vision:11b",
+            "claude_vision_model": "claude-haiku-4-5-20251001",
         }
 
     def load_settings(self, folder_name: str, base_dir: Path) -> dict:
