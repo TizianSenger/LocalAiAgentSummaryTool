@@ -274,6 +274,62 @@
         </div>
       </div>
 
+      <!-- Vision model -->
+      <div class="settings-section">
+        <label class="settings-label">
+          Bildanalyse (Vision-KI)
+          <span class="settings-badge">Beta</span>
+        </label>
+        <p class="settings-hint" style="margin-bottom:10px">
+          Bilder aus dem PDF werden analysiert und als Text beschrieben,
+          bevor die KI zusammenfasst – so gehen Diagramme und Graphen nicht verloren.
+        </p>
+
+        <label class="toggle-item toggle-item-row">
+          <input type="checkbox" id="use-vision" />
+          <span class="toggle-slider"></span>
+          <span>Bildanalyse aktivieren</span>
+        </label>
+
+        <!-- Provider tabs – only shown when vision is enabled -->
+        <div id="vision-config" class="vision-config hidden">
+
+          <div class="vision-tabs" id="vision-tabs">
+            <button class="vision-tab active" data-provider="ollama">
+              🖥 Lokal (Ollama)
+            </button>
+            <button class="vision-tab" data-provider="claude">
+              ✦ Claude API
+            </button>
+          </div>
+
+          <!-- Ollama tab -->
+          <div class="vision-tab-content" id="vision-content-ollama">
+            <label class="settings-label" style="margin-top:4px">Vision-Modell</label>
+            <input type="text" class="form-input" id="settings-vision-model"
+                   placeholder="llama3.2-vision:11b" value="llama3.2-vision:11b" />
+            <p class="settings-hint">
+              Installieren: <code>ollama pull llama3.2-vision:11b</code><br>
+              Alternativen: <code>llava:13b</code> · <code>llava:7b</code> · <code>moondream</code>
+            </p>
+          </div>
+
+          <!-- Claude API tab -->
+          <div class="vision-tab-content hidden" id="vision-content-claude">
+            <label class="settings-label" style="margin-top:4px">Claude-Modell</label>
+            <select class="form-select" id="settings-claude-vision-model">
+              <option value="claude-haiku-4-5-20251001">Claude Haiku – schnell &amp; günstig (~$0.001/Bild)</option>
+              <option value="claude-sonnet-4-6">Claude Sonnet – beste Qualität (~$0.003/Bild)</option>
+            </select>
+            <p class="settings-hint" style="margin-top:8px">
+              API Key wird aus der <code>.env</code> Datei geladen.<br>
+              <code>ANTHROPIC_API_KEY=sk-ant-…</code>
+            </p>
+          </div>
+
+        </div><!-- /vision-config -->
+      </div>
+
       <!-- System Prompt -->
       <div class="settings-section">
         <label class="settings-label">System-Prompt</label>
@@ -372,62 +428,6 @@
             <span>Code</span>
           </label>
         </div>
-      </div>
-
-      <!-- Vision model -->
-      <div class="settings-section">
-        <label class="settings-label">
-          Bildanalyse (Vision-KI)
-          <span class="settings-badge">Beta</span>
-        </label>
-        <p class="settings-hint" style="margin-bottom:10px">
-          Bilder aus dem PDF werden analysiert und als Text beschrieben,
-          bevor die KI zusammenfasst – so gehen Diagramme und Graphen nicht verloren.
-        </p>
-
-        <label class="toggle-item toggle-item-row">
-          <input type="checkbox" id="use-vision" />
-          <span class="toggle-slider"></span>
-          <span>Bildanalyse aktivieren</span>
-        </label>
-
-        <!-- Provider tabs – only shown when vision is enabled -->
-        <div id="vision-config" class="vision-config hidden">
-
-          <div class="vision-tabs" id="vision-tabs">
-            <button class="vision-tab active" data-provider="ollama">
-              🖥 Lokal (Ollama)
-            </button>
-            <button class="vision-tab" data-provider="claude">
-              ✦ Claude API
-            </button>
-          </div>
-
-          <!-- Ollama tab -->
-          <div class="vision-tab-content" id="vision-content-ollama">
-            <label class="settings-label" style="margin-top:4px">Vision-Modell</label>
-            <input type="text" class="form-input" id="settings-vision-model"
-                   placeholder="llama3.2-vision:11b" value="llama3.2-vision:11b" />
-            <p class="settings-hint">
-              Installieren: <code>ollama pull llama3.2-vision:11b</code><br>
-              Alternativen: <code>llava:13b</code> · <code>llava:7b</code> · <code>moondream</code>
-            </p>
-          </div>
-
-          <!-- Claude API tab -->
-          <div class="vision-tab-content hidden" id="vision-content-claude">
-            <label class="settings-label" style="margin-top:4px">Claude-Modell</label>
-            <select class="form-select" id="settings-claude-vision-model">
-              <option value="claude-haiku-4-5-20251001">Claude Haiku – schnell &amp; günstig (~$0.001/Bild)</option>
-              <option value="claude-sonnet-4-6">Claude Sonnet – beste Qualität (~$0.003/Bild)</option>
-            </select>
-            <p class="settings-hint" style="margin-top:8px">
-              API Key wird aus der <code>.env</code> Datei geladen.<br>
-              <code>ANTHROPIC_API_KEY=sk-ant-…</code>
-            </p>
-          </div>
-
-        </div><!-- /vision-config -->
       </div>
 
     </div><!-- /settings-body -->
