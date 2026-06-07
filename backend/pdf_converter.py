@@ -48,6 +48,7 @@ class PDFConverter:
         safe_name: str,
         base_dir: Path,
         progress: Optional[Callable[[int, str], Awaitable[None]]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> dict:
         """
         Convert the PDF found in {base_dir}/{safe_name}/original/ to Markdown.
@@ -89,7 +90,13 @@ class PDFConverter:
         # Read page count up front so the ticker can estimate timing
         page_count = self._get_page_count(pdf_path)
 
-        await self._emit(progress, 5, f"Lade KI-Modelle… ({page_count} Seiten erkannt)")
+        await self._emit(progress, 2, f"PDF geladen – {page_count} Seiten erkannt")
+
+        if cancel_check and cancel_check():
+            await self._emit(progress, 0, "⚠ Vorgang durch Benutzer abgebrochen.")
+            raise RuntimeError("Abgebrochen")
+
+        await self._emit(progress, 5, f"Lade KI-Modelle in GPU-Speicher… (marker-pdf + surya-ocr)")
 
         # Start the progress ticker in the background, then run the blocking conversion
         ticker = asyncio.create_task(self._progress_ticker(progress, page_count))

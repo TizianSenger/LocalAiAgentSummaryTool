@@ -64,6 +64,24 @@ const dom = {
     progressFill:      $('progress-fill'),
     progressMessage:   $('progress-message'),
 
+    // Stop button
+    btnStop: $('btn-stop'),
+
+    // Live Log
+    logToggle:      $('log-toggle'),
+    logToggleIcon:  $('log-toggle-icon'),
+    logPanelWrapper: $('log-panel-wrapper'),
+    logPanel:       $('log-panel'),
+    logClear:       $('log-clear'),
+
+    // Confirm modal
+    modalConfirm:   $('modal-confirm'),
+    confirmIcon:    $('confirm-icon'),
+    confirmTitle:   $('confirm-title'),
+    confirmMessage: $('confirm-message'),
+    btnConfirmOk:   $('btn-confirm-ok'),
+    btnConfirmCancel: $('btn-confirm-cancel'),
+
     // Content tabs + panels
     contentTabs:    $('content-tabs'),
     panelMarkdown:  $('panel-markdown'),
@@ -416,7 +434,8 @@ async function _convertPdf() {
         await _loadFolders();
         _showToast('Konvertierung abgeschlossen!');
     } catch (err) {
-        _showToast('Konvertierungsfehler: ' + err.message);
+        const cancelled = err.message?.toLowerCase().includes('abgebrochen');
+        _showToast(cancelled ? 'Konvertierung abgebrochen.' : 'Konvertierungsfehler: ' + err.message);
     } finally {
         _hideProgress();
         state.operationRunning = false;
@@ -455,7 +474,8 @@ async function _summarize() {
         await _loadFolders();
         _showToast('Zusammenfassung erstellt! 🎉');
     } catch (err) {
-        _showToast('Zusammenfassungsfehler: ' + err.message);
+        const cancelled = err.message?.toLowerCase().includes('abgebrochen');
+        _showToast(cancelled ? 'Zusammenfassung abgebrochen.' : 'Zusammenfassungsfehler: ' + err.message);
     } finally {
         _hideProgress();
         state.operationRunning = false;
@@ -474,10 +494,18 @@ function _showProgress(label) {
     dom.progressFill.style.width = '0%';
     dom.progressMessage.textContent = '';
     dom.progressContainer.classList.remove('hidden');
+    dom.btnStop.classList.remove('hidden');
+    // Reset log panel to collapsed state for each new operation
+    _clearLog();
+    _logVisible = false;
+    dom.logPanelWrapper.classList.add('hidden');
+    dom.logToggle.classList.remove('active');
+    dom.logToggleIcon.textContent = '▶ Log';
 }
 
 function _hideProgress() {
     dom.progressContainer.classList.add('hidden');
+    dom.btnStop.classList.add('hidden');
 }
 
 /** Receive a progress update from the WebSocket message handler. */
@@ -485,6 +513,107 @@ function _updateProgress(percent, message) {
     dom.progressPercent.textContent = `${percent}%`;
     dom.progressFill.style.width    = `${percent}%`;
     dom.progressMessage.textContent = message;
+    _appendLog(percent, message);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live Log
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _logVisible = false;
+
+function _initLogToggle() {
+    dom.logToggle.addEventListener('click', () => {
+        _logVisible = !_logVisible;
+        dom.logPanelWrapper.classList.toggle('hidden', !_logVisible);
+        dom.logToggle.classList.toggle('active', _logVisible);
+        dom.logToggleIcon.textContent = _logVisible ? '▼ Log' : '▶ Log';
+        if (_logVisible) dom.logPanel.scrollTop = dom.logPanel.scrollHeight;
+    });
+    dom.logClear.addEventListener('click', _clearLog);
+}
+
+function _clearLog() {
+    dom.logPanel.innerHTML = '';
+}
+
+function _appendLog(percent, message) {
+    const now = new Date();
+    const time = now.toTimeString().slice(0, 8);
+
+    // Classify message type for colour coding
+    let cls = 'log-info';
+    if (percent === 100)                   cls = 'log-success';
+    else if (message.startsWith('✓'))      cls = 'log-success';
+    else if (message.startsWith('↳'))      cls = 'log-detail';
+    else if (message.startsWith('⚠'))      cls = 'log-warn';
+    else if (message.startsWith('KI:'))    cls = 'log-ai';
+    else if (message.startsWith('FEHLER')) cls = 'log-warn';
+
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML =
+        `<span class="log-time">${time} [${String(percent).padStart(3)}%]</span>` +
+        `<span class="log-msg ${cls}">${_escapeHtml(message)}</span>`;
+
+    dom.logPanel.appendChild(entry);
+
+    // Auto-scroll only if already near the bottom
+    const panel = dom.logPanel;
+    const nearBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 60;
+    if (nearBottom) panel.scrollTop = panel.scrollHeight;
+}
+
+function _escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Confirm modal (delete / close / stop)
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _confirmCallback = null;
+
+function _openConfirmModal({ icon = '⚠', title, message, confirmLabel = 'Bestätigen', onConfirm }) {
+    dom.confirmIcon.textContent    = icon;
+    dom.confirmTitle.textContent   = title;
+    dom.confirmMessage.textContent = message;
+    dom.btnConfirmOk.textContent   = confirmLabel;
+    _confirmCallback = onConfirm;
+    dom.modalConfirm.classList.remove('hidden');
+}
+
+function _closeConfirmModal() {
+    dom.modalConfirm.classList.add('hidden');
+    _confirmCallback = null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stop running operation
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function _stopOperation() {
+    try {
+        await apiCancel(state.clientId);
+        _appendLog(0, '⚠ Abbruch wurde angefordert – warte auf Chunk-Ende…');
+    } catch { /* ignore */ }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Close app with confirmation
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _requestClose() {
+    const msg = state.operationRunning
+        ? 'Ein Vorgang läuft gerade. Trotzdem beenden?\nDer aktuelle Prozess wird abgebrochen.'
+        : 'StudyScript AI wirklich beenden?';
+    _openConfirmModal({
+        icon:         '⏻',
+        title:        'App beenden',
+        message:      msg,
+        confirmLabel: 'Beenden',
+        onConfirm:    () => window.electronAPI.close(),
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -567,23 +696,26 @@ async function _confirmCreateFolder() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function _confirmDeleteFolder(folder, cardEl) {
-    if (!confirm(`Ordner "${folder.name}" und alle Inhalte unwiderruflich löschen?`)) return;
-
-    animateCardRemove(cardEl, async () => {
-        try {
-            await apiFolderDelete(folder.safe_name);
-            state.folders = state.folders.filter(f => f.safe_name !== folder.safe_name);
-            cardEl.remove();
-            _renderFolderGrid();
-            _renderSidebar();
-
-            if (state.currentFolder?.safe_name === folder.safe_name) {
-                _goHome();
-            }
-            _showToast(`Ordner "${folder.name}" gelöscht.`);
-        } catch (err) {
-            _showToast('Löschen fehlgeschlagen: ' + err.message);
-        }
+    _openConfirmModal({
+        icon:         '🗑',
+        title:        'Ordner löschen',
+        message:      `"${folder.name}" und alle Inhalte (PDF, Markdown, Zusammenfassung) werden unwiderruflich gelöscht.`,
+        confirmLabel: 'Löschen',
+        onConfirm:    () => {
+            animateCardRemove(cardEl, async () => {
+                try {
+                    await apiFolderDelete(folder.safe_name);
+                    state.folders = state.folders.filter(f => f.safe_name !== folder.safe_name);
+                    cardEl.remove();
+                    _renderFolderGrid();
+                    _renderSidebar();
+                    if (state.currentFolder?.safe_name === folder.safe_name) _goHome();
+                    _showToast(`Ordner "${folder.name}" gelöscht.`);
+                } catch (err) {
+                    _showToast('Löschen fehlgeschlagen: ' + err.message);
+                }
+            });
+        },
     });
 }
 
@@ -747,6 +879,31 @@ function _wireUIEvents() {
     // Temperature slider live display
     dom.settingsTemperature.addEventListener('input', () => {
         dom.tempDisplay.textContent = parseFloat(dom.settingsTemperature.value).toFixed(2);
+    });
+
+    // Live Log toggle
+    _initLogToggle();
+
+    // Stop button
+    dom.btnStop.addEventListener('click', () => {
+        _openConfirmModal({
+            icon:         '■',
+            title:        'Vorgang abbrechen',
+            message:      'Den laufenden Vorgang wirklich abbrechen? Bereits verarbeitete Abschnitte gehen verloren.',
+            confirmLabel: 'Abbrechen',
+            onConfirm:    _stopOperation,
+        });
+    });
+
+    // Confirm modal buttons
+    dom.btnConfirmOk.addEventListener('click', () => {
+        const cb = _confirmCallback;
+        _closeConfirmModal();
+        if (cb) cb();
+    });
+    dom.btnConfirmCancel.addEventListener('click', _closeConfirmModal);
+    dom.modalConfirm.addEventListener('click', e => {
+        if (e.target === dom.modalConfirm) _closeConfirmModal();
     });
 }
 

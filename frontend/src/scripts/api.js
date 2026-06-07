@@ -180,6 +180,20 @@ async function apiSaveSettings(safeName, settings) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Cancel running operation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Signal the backend to stop the currently running operation for this client.
+ * @param {string} clientId - WebSocket client identifier
+ * @returns {Promise<Object>}
+ */
+async function apiCancel(clientId) {
+    const qs = clientId ? `?client_id=${encodeURIComponent(clientId)}` : '';
+    return _req(`/cancel${qs}`, { method: 'POST' });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Ollama
 // ─────────────────────────────────────────────────────────────────────────────
 

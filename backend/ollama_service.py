@@ -106,6 +106,7 @@ class OllamaService:
         base_dir: Path,
         settings: dict,
         progress: Optional[Callable[[int, str], Awaitable[None]]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> dict:
         """
         Summarize the converted Markdown and save the result to summary/summary.md.
@@ -145,8 +146,17 @@ class OllamaService:
         chunk_summaries: list[str] = []
 
         for i, chunk in enumerate(chunks):
+            if cancel_check and cancel_check():
+                await self._emit(progress, 0, "⚠ Vorgang durch Benutzer abgebrochen.")
+                raise RuntimeError("Abgebrochen")
+
             pct = 10 + int((i / total) * 75)
-            await self._emit(progress, pct, f"Fasse Abschnitt {i + 1} von {total} zusammen…")
+            char_count = len(chunk)
+            preview = chunk.replace('\n', ' ').strip()[:90]
+            await self._emit(progress, pct,
+                f"Fasse Abschnitt {i + 1} von {total} zusammen… ({char_count} Zeichen)")
+            await self._emit(progress, pct,
+                f"↳ {preview}…")
 
             summary = await loop.run_in_executor(
                 None,
@@ -157,6 +167,10 @@ class OllamaService:
                 total,
             )
             chunk_summaries.append(summary)
+
+            resp_preview = summary.replace('\n', ' ').strip()[:90]
+            await self._emit(progress, pct,
+                f"✓ Chunk {i + 1} fertig – KI: {resp_preview}…")
 
         await self._emit(progress, 88, "Erstelle finales Dokument…")
 

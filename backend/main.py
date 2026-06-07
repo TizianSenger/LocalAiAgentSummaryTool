@@ -49,6 +49,9 @@ settings_manager = SettingsManager()
 # Maps client_id → open WebSocket; used to push progress updates
 _websockets: dict[str, WebSocket] = {}
 
+# Cancel flags: set to True by POST /cancel; polled by running operations
+_cancel_flags: dict[str, bool] = {}
+
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
@@ -117,6 +120,14 @@ async def health():
     return {"status": "ok", "version": "1.0.0"}
 
 
+@app.post("/cancel")
+async def cancel_operation(client_id: Optional[str] = Query(default=None)):
+    """Signal the running convert/summarize operation for this client to stop."""
+    if client_id:
+        _cancel_flags[client_id] = True
+    return {"message": "Abbruch angefordert"}
+
+
 # ---------------------------------------------------------------------------
 # Folder management
 # ---------------------------------------------------------------------------
@@ -170,10 +181,15 @@ async def convert_pdf(
     Convert the uploaded PDF to Markdown with image extraction.
     Progress updates are streamed to the WebSocket identified by client_id.
     """
+    _cancel_flags.pop(client_id, None)  # clear any stale flag
+
     async def cb(p: int, m: str):
         await _push(client_id, p, m)
 
-    return await pdf_converter.convert(safe_name, BASE_DATA_DIR, cb)
+    def cancel_check() -> bool:
+        return _cancel_flags.pop(client_id, False)
+
+    return await pdf_converter.convert(safe_name, BASE_DATA_DIR, cb, cancel_check)
 
 
 # ---------------------------------------------------------------------------
@@ -190,12 +206,16 @@ async def summarize(
     Summarize the converted Markdown using Ollama.
     Model, system prompt, and length are read from the folder's settings.json.
     """
+    _cancel_flags.pop(client_id, None)  # clear any stale flag
     loaded_settings = settings_manager.load_settings(safe_name, BASE_DATA_DIR)
 
     async def cb(p: int, m: str):
         await _push(client_id, p, m)
 
-    return await ollama_service.summarize(safe_name, BASE_DATA_DIR, loaded_settings, cb)
+    def cancel_check() -> bool:
+        return _cancel_flags.pop(client_id, False)
+
+    return await ollama_service.summarize(safe_name, BASE_DATA_DIR, loaded_settings, cb, cancel_check)
 
 
 # ---------------------------------------------------------------------------

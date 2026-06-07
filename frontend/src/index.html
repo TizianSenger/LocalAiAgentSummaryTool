@@ -41,7 +41,7 @@
     <div class="titlebar-controls">
       <button class="tb-btn tb-minimize" onclick="window.electronAPI.minimize()">—</button>
       <button class="tb-btn tb-maximize" onclick="window.electronAPI.maximize()">□</button>
-      <button class="tb-btn tb-close"    onclick="window.electronAPI.close()">✕</button>
+      <button class="tb-btn tb-close"    onclick="_requestClose()">✕</button>
     </div>
   </div>
 
@@ -139,12 +139,27 @@
       <div class="progress-container hidden" id="progress-container">
         <div class="progress-header">
           <span class="progress-label" id="progress-label">Konvertiere PDF…</span>
-          <span class="progress-percent" id="progress-percent">0%</span>
+          <div class="progress-header-right">
+            <span class="progress-percent" id="progress-percent">0%</span>
+            <button class="log-toggle-btn" id="log-toggle" title="Live Log anzeigen">
+              <span id="log-toggle-icon">▶ Log</span>
+            </button>
+            <button class="btn-stop hidden" id="btn-stop" title="Vorgang abbrechen">■ Stopp</button>
+          </div>
         </div>
         <div class="progress-track">
           <div class="progress-fill" id="progress-fill"></div>
         </div>
         <p class="progress-message muted" id="progress-message"></p>
+
+        <!-- Live Log Terminal (collapsed by default) -->
+        <div class="log-panel-wrapper hidden" id="log-panel-wrapper">
+          <div class="log-panel-header">
+            <span class="log-panel-title">Live Log</span>
+            <button class="log-clear-btn" id="log-clear">Leeren</button>
+          </div>
+          <div class="log-panel" id="log-panel"></div>
+        </div>
       </div>
 
       <!-- Action buttons row -->
@@ -195,6 +210,23 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" id="btn-modal-cancel">Abbrechen</button>
       <button class="btn btn-primary" id="btn-modal-confirm">Erstellen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     MODAL – Confirm (delete / close / stop)
+═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-overlay hidden" id="modal-confirm">
+  <div class="modal modal-sm">
+    <div class="confirm-icon-wrap" id="confirm-icon-wrap">
+      <span id="confirm-icon">⚠</span>
+    </div>
+    <h2 class="modal-title" id="confirm-title">Sicher?</h2>
+    <p class="confirm-message" id="confirm-message"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btn-confirm-cancel">Abbrechen</button>
+      <button class="btn btn-danger" id="btn-confirm-ok">Bestätigen</button>
     </div>
   </div>
 </div>
