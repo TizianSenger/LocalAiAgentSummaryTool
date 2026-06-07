@@ -47,6 +47,7 @@ cd LocalAiAgentSummaryTool
 
 Das Skript installiert automatisch:
 - Alle Python-Pakete (`marker-pdf`, `pymupdf4llm`, `FastAPI`, `ollama`, …)
+- PyTorch mit CUDA 12.8 GPU-Beschleunigung (falls NVIDIA GPU vorhanden, ~2–3 GB Download)
 - Electron und seine Abhängigkeiten (`npm install`)
 
 > Beim ersten Start der PDF-Konvertierung lädt `marker-pdf` automatisch KI-Modelle herunter (~2–4 GB). Das passiert einmalig.

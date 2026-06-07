@@ -70,6 +70,25 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: ── PyTorch CUDA (GPU-Beschleunigung) ─────────────────────────────────────────
+echo.
+echo [1b/4] Installiere PyTorch mit CUDA 12.8 fuer GPU-Beschleunigung...
+echo        (ca. 2-3 GB Download - bitte warten)
+echo.
+nvidia-smi >nul 2>&1
+if not errorlevel 1 (
+    echo NVIDIA GPU erkannt - installiere CUDA-Version von PyTorch...
+    %PYTHON_CMD% -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+    if errorlevel 1 (
+        echo WARNUNG: CUDA PyTorch konnte nicht installiert werden.
+        echo          Konvertierung laeuft auf CPU (langsamer, aber funktionsfaehig).
+    ) else (
+        echo PyTorch CUDA erfolgreich installiert - GPU wird genutzt!
+    )
+) else (
+    echo Kein NVIDIA GPU gefunden - CPU-Version von PyTorch wird verwendet.
+)
+
 :: ── Electron Frontend ─────────────────────────────────────────────────────────
 echo.
 echo [2/4] Installiere Electron (Node.js benoetigt)...
