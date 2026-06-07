@@ -27,14 +27,16 @@ let pythonProcess = null;
 
 /**
  * Resolve the Python executable to use.
- * Windows often lacks a 'python' alias in PATH (Microsoft Store stub).
- * Priority: py (Windows Launcher) → python3 → python
+ * Prefers specific versions compatible with all dependencies (3.11 > 3.12 > 3.13).
+ * Falls back to the generic 'py' launcher or 'python3'/'python'.
  */
 function findPythonCmd() {
     const { execSync } = require('child_process');
+
+    // Versioned py-launcher calls (Windows) – avoids Python 3.14 Pillow issues
     const candidates = process.platform === 'win32'
-        ? ['py', 'python3', 'python']
-        : ['python3', 'python'];
+        ? ['py -3.11', 'py -3.12', 'py -3.13', 'py', 'python3', 'python']
+        : ['python3.11', 'python3.12', 'python3', 'python'];
 
     for (const cmd of candidates) {
         try {
@@ -42,7 +44,7 @@ function findPythonCmd() {
             return cmd;
         } catch { /* not found – try next */ }
     }
-    return candidates[0]; // last resort – will fail with a readable error
+    return 'py'; // last resort
 }
 
 /**

@@ -7,19 +7,19 @@ echo.
 :: ── Python 3.12 bevorzugt (beste Paketkompatibilitaet fuer marker-pdf etc.) ──
 echo [0/4] Suche Python-Installation...
 
-py -3.12 --version >nul 2>&1
-if not errorlevel 1 (
-    set PYTHON_CMD=py -3.12
-    echo Gefunden: Python 3.12 (empfohlen)
-    py -3.12 --version
-    goto run_install
-)
-
 py -3.11 --version >nul 2>&1
 if not errorlevel 1 (
     set PYTHON_CMD=py -3.11
-    echo Gefunden: Python 3.11
+    echo Gefunden: Python 3.11 (empfohlen)
     py -3.11 --version
+    goto run_install
+)
+
+py -3.12 --version >nul 2>&1
+if not errorlevel 1 (
+    set PYTHON_CMD=py -3.12
+    echo Gefunden: Python 3.12
+    py -3.12 --version
     goto run_install
 )
 
