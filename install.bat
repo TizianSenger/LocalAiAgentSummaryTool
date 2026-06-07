@@ -5,56 +5,43 @@ echo ============================================================
 echo.
 
 :: ── Python-Befehl ermitteln ──────────────────────────────────────────────────
-:: Windows hat haeufig keinen "python"-Alias im PATH, dafuer aber den "py"-Launcher
-:: oder pip ist direkt verfuegbar. Wir probieren alle gaengigen Varianten.
+:: Windows hat haeufig keinen "python"-Alias (Microsoft Store Stub),
+:: dafuer aber den "py"-Launcher. Wir probieren: py -> python3 -> python
 echo [0/4] Suche Python-Installation...
 
-set PYTHON_CMD=
-
-:: 1. Versuch: py-Launcher (Standard bei python.org-Installation auf Windows)
 py --version >nul 2>&1
 if not errorlevel 1 (
     set PYTHON_CMD=py
-    echo Gefunden: py-Launcher
-    py --version
-    goto :found_python
+    goto run_install
 )
 
-:: 2. Versuch: python3
 python3 --version >nul 2>&1
 if not errorlevel 1 (
     set PYTHON_CMD=python3
-    echo Gefunden: python3
-    python3 --version
-    goto :found_python
+    goto run_install
 )
 
-:: 3. Versuch: python
 python --version >nul 2>&1
 if not errorlevel 1 (
     set PYTHON_CMD=python
-    echo Gefunden: python
-    python --version
-    goto :found_python
+    goto run_install
 )
 
 echo FEHLER: Python nicht gefunden.
 echo Bitte Python von https://python.org herunterladen und installieren.
-echo Empfohlen: Python 3.11 oder 3.12
 pause
 exit /b 1
 
-:found_python
-
-:: pip-Befehl ableiten (py -m pip ist zuverlaessiger als direktes "pip")
-set PIP_CMD=%PYTHON_CMD% -m pip
+:run_install
+echo Gefunden: %PYTHON_CMD%
+%PYTHON_CMD% --version
 
 :: ── Pillow vorab installieren ─────────────────────────────────────────────────
-:: pip's Dependency-Resolver stuft Pillow sonst auf 10.x zurueck, das kein
-:: Python-3.14-Binary hat. Pillow>=12.0.0 hat vorgefertigte cp314-Wheels.
+:: pip's Dependency-Resolver stuft Pillow auf 10.x zurueck, das kein
+:: Python-3.14-Binary hat. Vorab-Installation von >=12.0.0 verhindert das.
 echo.
 echo [1/4] Installiere Pillow (Python 3.14 kompatibel)...
-%PIP_CMD% install "Pillow>=12.0.0"
+%PYTHON_CMD% -m pip install "Pillow>=12.0.0"
 if errorlevel 1 (
     echo FEHLER: Pillow konnte nicht installiert werden.
     pause
@@ -66,7 +53,7 @@ echo.
 echo [2/4] Installiere Python-Abhaengigkeiten...
 echo       (marker-pdf laedt beim ersten Start GPU-Modelle herunter ~2-4 GB)
 echo.
-%PIP_CMD% install -r backend\requirements.txt
+%PYTHON_CMD% -m pip install -r backend\requirements.txt
 if errorlevel 1 (
     echo.
     echo FEHLER: pip install fehlgeschlagen.
