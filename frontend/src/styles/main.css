@@ -966,8 +966,45 @@ html, body {
   padding: 8px 0;
 }
 
-.vision-model-row {
-  margin-top: 4px;
+/* ── Vision provider tabs ───────────────────────────────────────────── */
+.vision-config {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.vision-tabs {
+  display: flex;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.vision-tab {
+  flex: 1;
+  padding: 9px 12px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.vision-tab:hover { color: var(--text-primary); }
+.vision-tab.active {
+  color: var(--accent-bright);
+  border-bottom-color: var(--accent-bright);
+  background: rgba(139,92,246,0.06);
+}
+
+.vision-tab-content {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .form-select {

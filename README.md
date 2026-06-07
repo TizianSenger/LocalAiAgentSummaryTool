@@ -66,12 +66,17 @@ ollama pull qwen2.5:7b
 
 #### Vision-Modell (optional, für Bildanalyse)
 
+Wähle zwischen **lokalem Ollama-Modell** oder **Claude API**:
+
 ```bash
-# Empfohlen – analysiert Diagramme, Graphen, Formeln aus dem PDF
+# Option A: Lokal via Ollama (kein API Key nötig)
 ollama pull llama3.2-vision:11b
+
+# Option B: Claude API – .env Datei im Projektordner anlegen:
+# ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-> Nach der Installation das Vision-Modell pro Ordner unter **⚙ Einstellungen → Bildanalyse** aktivieren.
+> Nach der Einrichtung das Vision-Modell pro Ordner unter **⚙ Einstellungen → Bildanalyse** aktivieren und den gewünschten Anbieter wählen.
 
 ---
 

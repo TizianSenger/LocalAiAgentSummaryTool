@@ -146,8 +146,11 @@ class OllamaService:
         loop = asyncio.get_event_loop()
         chunk_summaries: list[str] = []
 
-        use_vision   = settings.get("use_vision", False)
-        vision_model = settings.get("vision_model", "llama3.2-vision:11b")
+        use_vision        = settings.get("use_vision", False)
+        vision_provider   = settings.get("vision_provider", "ollama")
+        vision_model      = settings.get("vision_model", "llama3.2-vision:11b")
+        claude_vis_model  = settings.get("claude_vision_model", "claude-haiku-4-5-20251001")
+        active_vis_label  = f"Claude ({claude_vis_model})" if vision_provider == "claude" else vision_model
 
         for i, chunk in enumerate(chunks):
             if cancel_check and cancel_check():
@@ -165,13 +168,15 @@ class OllamaService:
             if use_vision and re.search(r'!\[.*?\]\(images/', chunk):
                 img_count = len(re.findall(r'!\[.*?\]\(images/', chunk))
                 await self._emit(progress, pct,
-                    f"↳ Analysiere {img_count} Bild(er) mit {vision_model}…")
+                    f"↳ Analysiere {img_count} Bild(er) via {active_vis_label}…")
                 chunk = await loop.run_in_executor(
                     None,
                     self._enrich_chunk_with_vision,
                     chunk,
                     converted_dir / "images",
+                    vision_provider,
                     vision_model,
+                    claude_vis_model,
                 )
 
             summary = await loop.run_in_executor(
@@ -263,35 +268,37 @@ class OllamaService:
         self,
         chunk: str,
         images_dir: Path,
-        vision_model: str,
+        provider: str,
+        ollama_model: str,
+        claude_model: str,
     ) -> str:
         """
-        Find every image reference in a Markdown chunk, describe it with a
-        vision model, and replace the ![...](images/...) syntax with a
-        blockquote description so the text summarizer sees the visual content.
+        Find every image reference in a Markdown chunk, describe it with the
+        chosen vision provider, and replace ![...](images/...) with a blockquote
+        so the text summarizer understands the visual content.
         """
         def replace_image(match: re.Match) -> str:
             alt      = match.group(1)
             filename = match.group(2)
-            desc     = self._describe_image(images_dir / filename, vision_model, alt)
+            image_path = images_dir / filename
+            if provider == "claude":
+                desc = self._describe_image_claude(image_path, claude_model, alt)
+            else:
+                desc = self._describe_image_ollama(image_path, ollama_model, alt)
             if desc:
                 label = alt or filename
                 return f'\n> 📷 **Abbildung – {label}:** {desc}\n'
-            return match.group(0)   # keep original markdown on failure
+            return match.group(0)
 
         return re.sub(r'!\[([^\]]*)\]\(images/([^)]+)\)', replace_image, chunk)
 
     @staticmethod
-    def _describe_image(image_path: Path, vision_model: str, context: str = "") -> str:
-        """
-        Send one image to the Ollama vision model and return a German description.
-        Returns an empty string if the image doesn't exist or the model fails.
-        """
+    def _describe_image_ollama(image_path: Path, vision_model: str, context: str = "") -> str:
+        """Describe an image using a local Ollama vision model."""
         import ollama
 
         if not image_path.exists():
             return ""
-
         try:
             with open(image_path, "rb") as f:
                 image_b64 = base64.b64encode(f.read()).decode()
@@ -303,17 +310,69 @@ class OllamaService:
                 "Was zeigt es? (z.B. Diagramm, Formel, Graph, Schaltkreis, Tabelle…) "
                 "Antworte nur mit der Beschreibung, ohne Einleitung."
             )
-
             response = ollama.chat(
                 model=vision_model,
                 messages=[{"role": "user", "content": prompt, "images": [image_b64]}],
             )
             desc = _extract_content(response).strip()
-            print(f"[vision] {image_path.name}: {desc[:80]}…")
+            print(f"[vision/ollama] {image_path.name}: {desc[:80]}…")
             return desc
-
         except Exception as exc:
-            print(f"[vision] Bildanalyse fehlgeschlagen für {image_path.name}: {exc}")
+            print(f"[vision/ollama] Fehler bei {image_path.name}: {exc}")
+            return ""
+
+    @staticmethod
+    def _describe_image_claude(image_path: Path, claude_model: str, context: str = "") -> str:
+        """Describe an image using the Anthropic Claude API (requires ANTHROPIC_API_KEY in .env)."""
+        import os
+        import anthropic
+
+        if not image_path.exists():
+            return ""
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key or api_key == "dein-api-key-hier":
+            print("[vision/claude] ANTHROPIC_API_KEY nicht konfiguriert – überspringe Bild.")
+            return ""
+
+        try:
+            with open(image_path, "rb") as f:
+                image_b64 = base64.b64encode(f.read()).decode()
+
+            suffix = image_path.suffix.lower().lstrip(".")
+            media_type = {"png": "image/png", "jpg": "image/jpeg",
+                          "jpeg": "image/jpeg", "webp": "image/webp",
+                          "gif": "image/gif"}.get(suffix, "image/png")
+
+            ctx_hint = f' (Kontext: "{context}")' if context else ""
+            prompt = (
+                f"Beschreibe dieses Bild aus einem wissenschaftlichen Lernscript "
+                f"präzise und knapp auf Deutsch{ctx_hint}. "
+                "Was zeigt es? (z.B. Diagramm, Formel, Graph, Schaltkreis, Tabelle…) "
+                "Antworte nur mit der Beschreibung, ohne Einleitung."
+            )
+
+            client = anthropic.Anthropic(api_key=api_key)
+            message = client.messages.create(
+                model=claude_model,
+                max_tokens=300,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": image_b64,
+                        }},
+                        {"type": "text", "text": prompt},
+                    ],
+                }],
+            )
+            desc = message.content[0].text.strip()
+            print(f"[vision/claude] {image_path.name}: {desc[:80]}…")
+            return desc
+        except Exception as exc:
+            print(f"[vision/claude] Fehler bei {image_path.name}: {exc}")
             return ""
 
     # ------------------------------------------------------------------

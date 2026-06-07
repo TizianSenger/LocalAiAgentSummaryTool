@@ -12,3 +12,9 @@ pymupdf4llm>=0.0.5
 
 # Ollama AI client
 ollama>=0.1.7
+
+# Anthropic Claude API (fuer Claude Vision-Bildanalyse)
+anthropic>=0.46.0
+
+# .env Datei laden (ANTHROPIC_API_KEY)
+python-dotenv>=1.0.0

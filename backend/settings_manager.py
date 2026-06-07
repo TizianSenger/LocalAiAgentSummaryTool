@@ -44,9 +44,11 @@ class SettingsManager:
             "include_code": True,
             "chunk_size": 3000,           # characters per summarization chunk
             "temperature": 0.3,           # low = more factual, high = more creative
-            # Vision model for image analysis (requires a multimodal Ollama model)
+            # Vision: image analysis before summarization
             "use_vision": False,
-            "vision_model": "llama3.2-vision:11b",
+            "vision_provider": "ollama",            # "ollama" | "claude"
+            "vision_model": "llama3.2-vision:11b",  # Ollama vision model
+            "claude_vision_model": "claude-haiku-4-5-20251001",  # Claude model for vision
         }
 
     def load_settings(self, folder_name: str, base_dir: Path) -> dict:

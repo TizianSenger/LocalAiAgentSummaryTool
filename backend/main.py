@@ -25,6 +25,11 @@ from pathlib import Path
 from typing import Optional
 
 import uvicorn
+from dotenv import load_dotenv
+
+# Load .env from project root (one level above this file) so ANTHROPIC_API_KEY
+# is available for Claude vision calls without polluting the system environment.
+load_dotenv(Path(__file__).parent.parent / ".env")
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 

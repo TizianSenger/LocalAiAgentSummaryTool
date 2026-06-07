@@ -106,9 +106,10 @@ const dom = {
     settingsChunkSize:   $('settings-chunk-size'),
     settingsTemperature: $('settings-temperature'),
     tempDisplay:         $('temp-display'),
-    useVision:           $('use-vision'),
-    settingsVisionModel: $('settings-vision-model'),
-    visionModelRow:      $('vision-model-row'),
+    useVision:              $('use-vision'),
+    visionConfig:           $('vision-config'),
+    settingsVisionModel:    $('settings-vision-model'),
+    settingsClaudeVision:   $('settings-claude-vision-model'),
 
     // Toast
     toast:        $('toast'),
@@ -572,6 +573,23 @@ function _escapeHtml(str) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Vision provider tab switch
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _switchVisionTab(provider) {
+    document.querySelectorAll('.vision-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.provider === provider);
+    });
+    $('vision-content-ollama').classList.toggle('hidden', provider !== 'ollama');
+    $('vision-content-claude').classList.toggle('hidden', provider !== 'claude');
+}
+
+function _activeVisionProvider() {
+    const active = document.querySelector('.vision-tab.active');
+    return active ? active.dataset.provider : 'ollama';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Confirm modal (delete / close / stop)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -764,10 +782,13 @@ async function _openSettings() {
     $('include-code').checked     = settings.include_code     ?? true;
 
     // Vision
-    const visionOn = settings.use_vision ?? false;
+    const visionOn       = settings.use_vision ?? false;
+    const visionProvider = settings.vision_provider ?? 'ollama';
     dom.useVision.checked = visionOn;
-    dom.settingsVisionModel.value = settings.vision_model ?? 'llama3.2-vision:11b';
-    dom.visionModelRow.classList.toggle('hidden', !visionOn);
+    dom.visionConfig.classList.toggle('hidden', !visionOn);
+    dom.settingsVisionModel.value  = settings.vision_model        ?? 'llama3.2-vision:11b';
+    dom.settingsClaudeVision.value = settings.claude_vision_model ?? 'claude-haiku-4-5-20251001';
+    _switchVisionTab(visionProvider);
 }
 
 function _closeSettings() {
@@ -791,8 +812,10 @@ async function _saveSettings() {
         include_tables:   $('include-tables').checked,
         include_formulas: $('include-formulas').checked,
         include_code:     $('include-code').checked,
-        use_vision:       dom.useVision.checked,
-        vision_model:     dom.settingsVisionModel.value.trim() || 'llama3.2-vision:11b',
+        use_vision:          dom.useVision.checked,
+        vision_provider:     _activeVisionProvider(),
+        vision_model:        dom.settingsVisionModel.value.trim() || 'llama3.2-vision:11b',
+        claude_vision_model: dom.settingsClaudeVision.value || 'claude-haiku-4-5-20251001',
     };
 
     try {
@@ -892,9 +915,14 @@ function _wireUIEvents() {
         dom.tempDisplay.textContent = parseFloat(dom.settingsTemperature.value).toFixed(2);
     });
 
-    // Vision toggle shows/hides the model input
+    // Vision toggle shows/hides the config block
     dom.useVision.addEventListener('change', () => {
-        dom.visionModelRow.classList.toggle('hidden', !dom.useVision.checked);
+        dom.visionConfig.classList.toggle('hidden', !dom.useVision.checked);
+    });
+
+    // Vision provider tabs
+    document.querySelectorAll('.vision-tab').forEach(tab => {
+        tab.addEventListener('click', () => _switchVisionTab(tab.dataset.provider));
     });
 
     // Live Log toggle

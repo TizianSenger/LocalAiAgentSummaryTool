@@ -51,4 +51,6 @@ class FolderSettings(BaseModel):
     chunk_size: int = Field(default=3000, ge=500, le=10000)
     temperature: float = Field(default=0.3, ge=0.0, le=1.0)
     use_vision: bool = False
-    vision_model: str = "llama3.2-vision:11b"
+    vision_provider: str = "ollama"              # "ollama" | "claude"
+    vision_model: str = "llama3.2-vision:11b"   # used when provider = ollama
+    claude_vision_model: str = "claude-haiku-4-5-20251001"  # used when provider = claude
