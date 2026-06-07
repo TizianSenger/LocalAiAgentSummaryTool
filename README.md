@@ -54,13 +54,53 @@ Das Skript installiert automatisch:
 
 ### 3. Ollama-Modell installieren
 
-```bash
-# Empfohlen für Zusammenfassungen
-ollama pull llama3.1
+#### Zusammenfassungs-Modell (Pflicht)
 
-# Alternatives Modell (kleiner, schneller)
-ollama pull mistral
+```bash
+# Empfohlen – beste Qualität für akademische deutsche Texte
+ollama pull qwen2.5:14b
+
+# Alternativ – schneller, weniger VRAM
+ollama pull qwen2.5:7b
 ```
+
+#### Vision-Modell (optional, für Bildanalyse)
+
+```bash
+# Empfohlen – analysiert Diagramme, Graphen, Formeln aus dem PDF
+ollama pull llama3.2-vision:11b
+```
+
+> Nach der Installation das Vision-Modell pro Ordner unter **⚙ Einstellungen → Bildanalyse** aktivieren.
+
+---
+
+## Modell-Empfehlungen
+
+### Zusammenfassungs-Modelle
+
+| Modell | VRAM | Qualität | Geschwindigkeit | Empfehlung |
+|---|---|---|---|---|
+| `qwen2.5:14b` | ~9 GB | ★★★★★ | mittel | **Empfohlen** |
+| `qwen2.5:7b` | ~5 GB | ★★★★☆ | schnell | Schnellere Alternative |
+| `gemma2:9b` | ~6 GB | ★★★★☆ | mittel | Google-Alternative |
+| `llama3.1:8b` | ~5 GB | ★★★☆☆ | schnell | Meta-Alternative |
+| `mistral:7b` | ~5 GB | ★★★☆☆ | sehr schnell | Wenn Speed wichtiger als Qualität |
+
+> **VRAM-Richtwert:** GPU mit ≥8 GB → `qwen2.5:14b`. GPU mit ≥6 GB → `qwen2.5:7b` oder `gemma2:9b`.
+
+### Vision-Modelle (Bildanalyse)
+
+Benötigt nur wenn Bilder aus dem PDF inhaltlich verstanden werden sollen (Diagramme, Graphen, Abbildungen).
+
+| Modell | VRAM | Qualität | Geschwindigkeit | Empfehlung |
+|---|---|---|---|---|
+| `llama3.2-vision:11b` | ~8 GB | ★★★★★ | mittel | **Empfohlen** |
+| `llava:13b` | ~9 GB | ★★★★☆ | mittel | Gute Alternative |
+| `llava:7b` | ~5 GB | ★★★☆☆ | schnell | Wenig VRAM |
+| `moondream` | ~2 GB | ★★☆☆☆ | sehr schnell | Minimale Anforderungen |
+
+> **Hinweis:** Text- und Vision-Modell laufen nacheinander, nicht gleichzeitig. Ein GPU mit 12 GB VRAM kann beide problemlos nutzen.
 
 ---
 
@@ -187,6 +227,12 @@ Große Scripte (400–1500 Seiten) passen nicht in ein einzelnes Kontextfenster.
 
 **PDF-Konvertierung sehr langsam**  
 → Beim allerersten Mal lädt marker-pdf ~2–4 GB Modelle herunter. Danach deutlich schneller.
+
+**GPU wird nicht genutzt (CPU-Auslastung sehr hoch)**  
+→ PyTorch wurde ohne CUDA installiert. Fix: `py -3.11 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128`
+
+**Bildanalyse funktioniert nicht**  
+→ Vision-Modell muss separat installiert sein: `ollama pull llama3.2-vision:11b`. In den Ordner-Einstellungen unter „Bildanalyse" aktivieren.
 
 **Installation schlägt fehl (Pillow-Fehler)**  
 → Python 3.13 oder 3.14 wird nicht unterstützt. Python 3.11 oder 3.12 installieren.

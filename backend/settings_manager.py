@@ -34,7 +34,7 @@ class SettingsManager:
         These are also used as fallback values when loading a partial settings file.
         """
         return {
-            "ollama_model": "llama3.1",
+            "ollama_model": "qwen2.5:14b",
             "system_prompt": _DEFAULT_SYSTEM_PROMPT,
             "summary_length": "medium",   # short | medium | long | comprehensive
             "language": "de",
@@ -44,6 +44,9 @@ class SettingsManager:
             "include_code": True,
             "chunk_size": 3000,           # characters per summarization chunk
             "temperature": 0.3,           # low = more factual, high = more creative
+            # Vision model for image analysis (requires a multimodal Ollama model)
+            "use_vision": False,
+            "vision_model": "llama3.2-vision:11b",
         }
 
     def load_settings(self, folder_name: str, base_dir: Path) -> dict:

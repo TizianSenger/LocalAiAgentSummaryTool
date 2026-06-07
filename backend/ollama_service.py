@@ -15,6 +15,7 @@ Images referenced in the original Markdown are copied to the summary folder
 so the summary remains a self-contained document with visuals.
 """
 import asyncio
+import base64
 import re
 import shutil
 from pathlib import Path
@@ -145,6 +146,9 @@ class OllamaService:
         loop = asyncio.get_event_loop()
         chunk_summaries: list[str] = []
 
+        use_vision   = settings.get("use_vision", False)
+        vision_model = settings.get("vision_model", "llama3.2-vision:11b")
+
         for i, chunk in enumerate(chunks):
             if cancel_check and cancel_check():
                 await self._emit(progress, 0, "⚠ Vorgang durch Benutzer abgebrochen.")
@@ -155,8 +159,20 @@ class OllamaService:
             preview = chunk.replace('\n', ' ').strip()[:90]
             await self._emit(progress, pct,
                 f"Fasse Abschnitt {i + 1} von {total} zusammen… ({char_count} Zeichen)")
-            await self._emit(progress, pct,
-                f"↳ {preview}…")
+            await self._emit(progress, pct, f"↳ {preview}…")
+
+            # Optional: replace image references with vision model descriptions
+            if use_vision and re.search(r'!\[.*?\]\(images/', chunk):
+                img_count = len(re.findall(r'!\[.*?\]\(images/', chunk))
+                await self._emit(progress, pct,
+                    f"↳ Analysiere {img_count} Bild(er) mit {vision_model}…")
+                chunk = await loop.run_in_executor(
+                    None,
+                    self._enrich_chunk_with_vision,
+                    chunk,
+                    converted_dir / "images",
+                    vision_model,
+                )
 
             summary = await loop.run_in_executor(
                 None,
@@ -238,6 +254,67 @@ class OllamaService:
             chunks.append("\n".join(current))
 
         return [c for c in chunks if c.strip()]
+
+    # ------------------------------------------------------------------
+    # Vision – image analysis (blocking – run in executor)
+    # ------------------------------------------------------------------
+
+    def _enrich_chunk_with_vision(
+        self,
+        chunk: str,
+        images_dir: Path,
+        vision_model: str,
+    ) -> str:
+        """
+        Find every image reference in a Markdown chunk, describe it with a
+        vision model, and replace the ![...](images/...) syntax with a
+        blockquote description so the text summarizer sees the visual content.
+        """
+        def replace_image(match: re.Match) -> str:
+            alt      = match.group(1)
+            filename = match.group(2)
+            desc     = self._describe_image(images_dir / filename, vision_model, alt)
+            if desc:
+                label = alt or filename
+                return f'\n> 📷 **Abbildung – {label}:** {desc}\n'
+            return match.group(0)   # keep original markdown on failure
+
+        return re.sub(r'!\[([^\]]*)\]\(images/([^)]+)\)', replace_image, chunk)
+
+    @staticmethod
+    def _describe_image(image_path: Path, vision_model: str, context: str = "") -> str:
+        """
+        Send one image to the Ollama vision model and return a German description.
+        Returns an empty string if the image doesn't exist or the model fails.
+        """
+        import ollama
+
+        if not image_path.exists():
+            return ""
+
+        try:
+            with open(image_path, "rb") as f:
+                image_b64 = base64.b64encode(f.read()).decode()
+
+            ctx_hint = f' (Kontext: "{context}")' if context else ""
+            prompt = (
+                f"Beschreibe dieses Bild aus einem wissenschaftlichen Lernscript "
+                f"präzise und knapp auf Deutsch{ctx_hint}. "
+                "Was zeigt es? (z.B. Diagramm, Formel, Graph, Schaltkreis, Tabelle…) "
+                "Antworte nur mit der Beschreibung, ohne Einleitung."
+            )
+
+            response = ollama.chat(
+                model=vision_model,
+                messages=[{"role": "user", "content": prompt, "images": [image_b64]}],
+            )
+            desc = _extract_content(response).strip()
+            print(f"[vision] {image_path.name}: {desc[:80]}…")
+            return desc
+
+        except Exception as exc:
+            print(f"[vision] Bildanalyse fehlgeschlagen für {image_path.name}: {exc}")
+            return ""
 
     # ------------------------------------------------------------------
     # Ollama calls (blocking – run in executor)

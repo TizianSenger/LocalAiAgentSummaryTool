@@ -352,6 +352,34 @@
         </div>
       </div>
 
+      <!-- Vision model -->
+      <div class="settings-section">
+        <label class="settings-label">
+          Bildanalyse (Vision-KI)
+          <span class="settings-badge">Beta</span>
+        </label>
+        <p class="settings-hint" style="margin-bottom:12px">
+          Bilder im PDF werden von einem Vision-Modell analysiert und als Text
+          beschrieben, bevor die Zusammenfassung erstellt wird. Erfordert ein
+          separates Ollama Vision-Modell (z.B. <code>llama3.2-vision:11b</code>).
+        </p>
+        <label class="toggle-item toggle-item-row">
+          <input type="checkbox" id="use-vision" />
+          <span class="toggle-slider"></span>
+          <span>Bildanalyse aktivieren</span>
+        </label>
+        <div id="vision-model-row" class="vision-model-row hidden">
+          <label class="settings-label" style="margin-top:12px">Vision-Modell</label>
+          <input type="text" class="form-input" id="settings-vision-model"
+                 placeholder="llama3.2-vision:11b"
+                 value="llama3.2-vision:11b" />
+          <p class="settings-hint">
+            Muss in Ollama installiert sein:
+            <code>ollama pull llama3.2-vision:11b</code>
+          </p>
+        </div>
+      </div>
+
     </div><!-- /settings-body -->
 
     <div class="settings-footer">

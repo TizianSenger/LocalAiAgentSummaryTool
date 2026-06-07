@@ -934,11 +934,40 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-secondary);
+  display: flex; align-items: center; gap: 8px;
+}
+
+.settings-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: rgba(139,92,246,0.2);
+  color: var(--accent-bright);
+  border: 1px solid rgba(139,92,246,0.35);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 
 .settings-hint {
   font-size: 11px;
   color: var(--text-muted);
+}
+.settings-hint code {
+  font-family: var(--font-mono, monospace);
+  background: var(--bg-elevated);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.toggle-item-row {
+  flex-direction: row;
+  padding: 8px 0;
+}
+
+.vision-model-row {
+  margin-top: 4px;
 }
 
 .form-select {

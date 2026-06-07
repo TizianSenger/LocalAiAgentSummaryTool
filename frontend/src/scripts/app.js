@@ -106,6 +106,9 @@ const dom = {
     settingsChunkSize:   $('settings-chunk-size'),
     settingsTemperature: $('settings-temperature'),
     tempDisplay:         $('temp-display'),
+    useVision:           $('use-vision'),
+    settingsVisionModel: $('settings-vision-model'),
+    visionModelRow:      $('vision-model-row'),
 
     // Toast
     toast:        $('toast'),
@@ -759,6 +762,12 @@ async function _openSettings() {
     $('include-tables').checked   = settings.include_tables   ?? true;
     $('include-formulas').checked = settings.include_formulas ?? true;
     $('include-code').checked     = settings.include_code     ?? true;
+
+    // Vision
+    const visionOn = settings.use_vision ?? false;
+    dom.useVision.checked = visionOn;
+    dom.settingsVisionModel.value = settings.vision_model ?? 'llama3.2-vision:11b';
+    dom.visionModelRow.classList.toggle('hidden', !visionOn);
 }
 
 function _closeSettings() {
@@ -782,6 +791,8 @@ async function _saveSettings() {
         include_tables:   $('include-tables').checked,
         include_formulas: $('include-formulas').checked,
         include_code:     $('include-code').checked,
+        use_vision:       dom.useVision.checked,
+        vision_model:     dom.settingsVisionModel.value.trim() || 'llama3.2-vision:11b',
     };
 
     try {
@@ -879,6 +890,11 @@ function _wireUIEvents() {
     // Temperature slider live display
     dom.settingsTemperature.addEventListener('input', () => {
         dom.tempDisplay.textContent = parseFloat(dom.settingsTemperature.value).toFixed(2);
+    });
+
+    // Vision toggle shows/hides the model input
+    dom.useVision.addEventListener('change', () => {
+        dom.visionModelRow.classList.toggle('hidden', !dom.useVision.checked);
     });
 
     // Live Log toggle
