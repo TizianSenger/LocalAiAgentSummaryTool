@@ -26,12 +26,31 @@ let pythonProcess = null;
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolve the Python executable to use.
+ * Windows often lacks a 'python' alias in PATH (Microsoft Store stub).
+ * Priority: py (Windows Launcher) → python3 → python
+ */
+function findPythonCmd() {
+    const { execSync } = require('child_process');
+    const candidates = process.platform === 'win32'
+        ? ['py', 'python3', 'python']
+        : ['python3', 'python'];
+
+    for (const cmd of candidates) {
+        try {
+            execSync(`${cmd} --version`, { stdio: 'ignore' });
+            return cmd;
+        } catch { /* not found – try next */ }
+    }
+    return candidates[0]; // last resort – will fail with a readable error
+}
+
+/**
  * Start the Python FastAPI backend.
  * stdout/stderr are piped so logs appear in the Electron dev console.
  */
 function startBackend() {
-    // On Windows 'python' is the typical command; adjust if needed
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    const pythonCmd = findPythonCmd();
 
     pythonProcess = spawn(pythonCmd, [BACKEND_SCRIPT], {
         cwd: path.dirname(BACKEND_SCRIPT),
