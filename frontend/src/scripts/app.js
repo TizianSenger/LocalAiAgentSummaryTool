@@ -20,11 +20,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const state = {
-    folders:        [],           // Array<FolderInfo> – all loaded folders
-    currentFolder:  null,         // FolderInfo – folder currently open in detail view
-    clientId:       _makeId(),    // Unique ID for this session's WebSocket channel
-    socket:         null,         // WebSocket instance
-    operationRunning: false,      // Blocks concurrent long operations
+    folders:              [],       // Array<FolderInfo> – all loaded folders
+    currentFolder:        null,     // FolderInfo – folder currently open in detail view
+    processingFolderName: null,     // safe_name of folder with a running operation
+    clientId:             _makeId(),// Unique ID for this session's WebSocket channel
+    socket:               null,     // WebSocket instance
+    operationRunning:     false,    // Blocks concurrent long operations
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,8 +83,13 @@ const dom = {
     btnConfirmOk:   $('btn-confirm-ok'),
     btnConfirmCancel: $('btn-confirm-cancel'),
 
+    // Workflow
+    workflowSection:   $('workflow-section'),
+    workflowDoneStrip: $('workflow-done-strip'),
+
     // Content tabs + panels
     contentTabs:    $('content-tabs'),
+    resultsSection: $('results-section'),
     panelMarkdown:  $('panel-markdown'),
     panelSummary:   $('panel-summary'),
     panelVault:     $('panel-vault'),
@@ -228,17 +234,21 @@ function _renderSidebar() {
 
     state.folders.forEach(folder => {
         const item = document.createElement('div');
-        item.className = 'sidebar-folder-item';
+        const isCurrent = state.currentFolder?.safe_name === folder.safe_name;
+        const isLocked  = state.processingFolderName && state.processingFolderName !== folder.safe_name;
+
+        item.className = 'sidebar-folder-item' + (isLocked ? ' locked' : '');
 
         // Colour dot: green = has summary, purple = has markdown, grey = empty
         const color = folder.has_summary ? '#4ade80' : folder.has_markdown ? '#8b5cf6' : '#64748b';
+        const lockIcon = isLocked ? ' 🔒' : '';
 
         item.innerHTML = `
             <span class="folder-dot" style="background:${color}"></span>
-            <span>${_esc(folder.name)}</span>
+            <span>${_esc(folder.name)}${lockIcon}</span>
         `;
 
-        if (state.currentFolder?.safe_name === folder.safe_name) {
+        if (isCurrent) {
             item.classList.add('active');
         }
 
@@ -303,6 +313,12 @@ function _statusRow(done, label) {
 
 /** Open the detail view for a specific folder. */
 function _openFolder(folder) {
+    // Block switching to a DIFFERENT folder while an operation is running
+    if (state.processingFolderName && state.processingFolderName !== folder.safe_name) {
+        _showToast('Bitte warte bis der aktuelle Vorgang abgeschlossen ist.');
+        return;
+    }
+
     state.currentFolder = folder;
 
     // Update detail header
@@ -330,23 +346,33 @@ function _openFolder(folder) {
         dom.uploadSubtext.textContent = 'Unterstützt akademische Skripte mit Formeln, Tabellen, Code & Bildern';
     }
 
-    // Load content previews if they exist
-    const hasContent = folder.has_markdown || folder.has_summary || folder.has_vault;
-    dom.contentTabs.classList.toggle('hidden', !hasContent);
+    // Workflow: collapse to done-strip when summary exists
+    const isDone = folder.has_summary;
+    dom.workflowSection.classList.toggle('hidden', isDone);
+    dom.workflowDoneStrip.classList.toggle('hidden', !isDone);
+
+    // Results section: show when any content exists
+    const hasResults = folder.has_markdown || folder.has_summary || folder.has_vault;
+    dom.resultsSection.classList.toggle('hidden', !hasResults);
     dom.panelMarkdown.classList.add('hidden');
     dom.panelSummary.classList.add('hidden');
     dom.panelVault.classList.add('hidden');
     dom.panelChat.classList.add('hidden');
 
-    if (folder.has_markdown) {
-        _loadMarkdownPreview();
-    }
+    // Vault button only enabled when markdown exists
+    dom.btnGenerateVault.disabled = !folder.has_markdown;
+
+    // Always reset vault list so no stale data from a previous folder leaks through
+    dom.vaultFileList.innerHTML = '<p class="muted vault-empty-hint">Noch kein Vault vorhanden. Klicke auf "Vault erstellen".</p>';
+
+    if (folder.has_markdown) _loadMarkdownPreview();
     if (folder.has_vault) {
         _loadVaultFileList();
         _updateVaultButtons(true);
     } else {
         _updateVaultButtons(false);
     }
+
     if (folder.has_summary) {
         _loadSummaryPreview();
         _switchTab('summary');
@@ -454,6 +480,7 @@ async function _convertPdf() {
     if (!state.currentFolder || state.operationRunning) return;
 
     state.operationRunning = true;
+    state.processingFolderName = state.currentFolder.safe_name;
     dom.btnConvert.disabled   = true;
     dom.btnSummarize.disabled = true;
 
@@ -467,7 +494,8 @@ async function _convertPdf() {
         animateStepComplete(dom.stepConvert.querySelector('.step-circle'));
 
         dom.btnSummarize.disabled = false;
-        dom.contentTabs.classList.remove('hidden');
+        dom.btnGenerateVault.disabled = false;
+        dom.resultsSection.classList.remove('hidden');
         await _loadMarkdownPreview();
         _switchTab('markdown');
 
@@ -479,7 +507,9 @@ async function _convertPdf() {
     } finally {
         _hideProgress();
         state.operationRunning = false;
+        state.processingFolderName = null;
         dom.btnConvert.disabled = false;
+        _renderSidebar();
     }
 }
 
@@ -492,6 +522,7 @@ async function _summarize() {
     if (!state.currentFolder || state.operationRunning) return;
 
     state.operationRunning = true;
+    state.processingFolderName = state.currentFolder.safe_name;
     dom.btnSummarize.disabled = true;
     dom.btnConvert.disabled   = true;
 
@@ -507,7 +538,11 @@ async function _summarize() {
         animateStepComplete(circle);
         animateParticleBurst(circle);   // celebration burst!
 
-        dom.contentTabs.classList.remove('hidden');
+        // Collapse workflow to done-strip
+        dom.workflowSection.classList.add('hidden');
+        dom.workflowDoneStrip.classList.remove('hidden');
+
+        dom.resultsSection.classList.remove('hidden');
         await _loadSummaryPreview();
         _switchTab('summary');
 
@@ -519,8 +554,10 @@ async function _summarize() {
     } finally {
         _hideProgress();
         state.operationRunning = false;
+        state.processingFolderName = null;
         dom.btnConvert.disabled   = !state.currentFolder?.has_pdf;
         dom.btnSummarize.disabled = !state.currentFolder?.has_markdown;
+        _renderSidebar();
     }
 }
 
@@ -690,21 +727,34 @@ function _requestClose() {
 // Content preview
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Rewrite relative image paths to absolute backend URLs for in-app display. */
+function _rewriteImagePaths(markdown, safeName) {
+    return markdown.replace(
+        /!\[([^\]]*)\]\(images\/([^)]+)\)/g,
+        (_, alt, filename) =>
+            `![${alt}](${API_BASE}/folders/${encodeURIComponent(safeName)}/image/${encodeURIComponent(filename)})`
+    );
+}
+
 async function _loadMarkdownPreview() {
     try {
         const { content } = await apiGetMarkdown(state.currentFolder.safe_name);
-        dom.markdownViewer.innerHTML = marked.parse(content);
+        dom.markdownViewer.innerHTML = marked.parse(
+            _rewriteImagePaths(content, state.currentFolder.safe_name)
+        );
     } catch { /* not critical */ }
 }
 
 async function _loadSummaryPreview() {
     try {
         const { content } = await apiGetSummary(state.currentFolder.safe_name);
-        dom.summaryViewer.innerHTML = marked.parse(content);
+        dom.summaryViewer.innerHTML = marked.parse(
+            _rewriteImagePaths(content, state.currentFolder.safe_name)
+        );
     } catch { /* not critical */ }
 }
 
-/** Switch between content tabs. */
+/** Switch between content tabs (markdown / summary / vault / chat). */
 function _switchTab(tabName) {
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tabName);
@@ -729,6 +779,7 @@ async function _generateVault() {
     if (!state.currentFolder || state.operationRunning) return;
 
     state.operationRunning = true;
+    state.processingFolderName = state.currentFolder.safe_name;
     dom.btnGenerateVault.disabled = true;
     _showProgress('Erstelle Obsidian Vault…');
 
@@ -737,7 +788,7 @@ async function _generateVault() {
         state.currentFolder.has_vault = true;
         _updateVaultButtons(true);
         await _loadVaultFileList();
-        dom.contentTabs.classList.remove('hidden');
+        dom.resultsSection.classList.remove('hidden');
         _switchTab('vault');
         await _loadFolders();
         _showToast(`Vault erstellt! ${result.note_count} Notizen`);
@@ -746,7 +797,9 @@ async function _generateVault() {
     } finally {
         _hideProgress();
         state.operationRunning = false;
+        state.processingFolderName = null;
         dom.btnGenerateVault.disabled = false;
+        _renderSidebar();
     }
 }
 
@@ -1082,6 +1135,12 @@ function _wireUIEvents() {
     // Action buttons
     dom.btnConvert.addEventListener('click',   _convertPdf);
     dom.btnSummarize.addEventListener('click', _summarize);
+
+    // Re-process: show workflow cards again
+    $('btn-reprocess').addEventListener('click', () => {
+        dom.workflowSection.classList.remove('hidden');
+        dom.workflowDoneStrip.classList.add('hidden');
+    });
 
     // Vault buttons
     dom.btnGenerateVault.addEventListener('click',  _generateVault);

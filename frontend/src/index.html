@@ -106,36 +106,70 @@
         </button>
       </div>
 
-      <!-- Step indicators -->
-      <div class="steps-row">
-        <div class="step" id="step-upload">
-          <div class="step-circle">1</div>
-          <span>PDF hochladen</span>
+      <!-- ── Workflow Cards (versteckt sobald alles fertig ist) ──────── -->
+      <div class="workflow-section" id="workflow-section">
+
+        <!-- Card 1: PDF hochladen -->
+        <div class="wf-card" id="step-upload">
+          <div class="wf-card-header">
+            <div class="step-circle">1</div>
+            <div class="wf-card-label">PDF hochladen</div>
+          </div>
+          <div class="wf-card-upload" id="upload-area">
+            <div class="upload-icon" id="upload-icon">📄</div>
+            <p class="upload-text" id="upload-text">PDF hier ablegen oder klicken</p>
+            <p class="muted" id="upload-subtext">Formeln, Tabellen, Code &amp; Bilder</p>
+            <input type="file" id="file-input" accept=".pdf" class="hidden" />
+            <button class="btn btn-primary" id="btn-upload" style="margin-top:10px">
+              PDF auswählen
+            </button>
+          </div>
         </div>
-        <div class="step-connector"></div>
-        <div class="step" id="step-convert">
-          <div class="step-circle">2</div>
-          <span>Konvertieren</span>
+
+        <div class="wf-arrow">→</div>
+
+        <!-- Card 2: Konvertieren -->
+        <div class="wf-card" id="step-convert">
+          <div class="wf-card-header">
+            <div class="step-circle">2</div>
+            <div class="wf-card-label">Konvertieren</div>
+          </div>
+          <div class="wf-card-body">
+            <p class="muted">Wandelt das PDF in Markdown um – Formeln, Tabellen und Bilder bleiben erhalten.</p>
+          </div>
+          <button class="btn btn-secondary wf-btn" id="btn-convert" disabled>
+            <span class="btn-icon">⟳</span> In Markdown konvertieren
+          </button>
         </div>
-        <div class="step-connector"></div>
-        <div class="step" id="step-summarize">
-          <div class="step-circle">3</div>
-          <span>Zusammenfassen</span>
+
+        <div class="wf-arrow">→</div>
+
+        <!-- Card 3: KI-Zusammenfassung -->
+        <div class="wf-card" id="step-summarize">
+          <div class="wf-card-header">
+            <div class="step-circle">3</div>
+            <div class="wf-card-label">KI-Zusammenfassung</div>
+          </div>
+          <div class="wf-card-body">
+            <p class="muted">Die KI erstellt ein kompaktes Lernscript mit den wichtigsten Inhalten.</p>
+          </div>
+          <button class="btn btn-accent wf-btn" id="btn-summarize" disabled>
+            <span class="btn-icon">✦</span> Zusammenfassung erstellen
+          </button>
         </div>
+
       </div>
 
-      <!-- Upload area -->
-      <div class="card upload-card" id="upload-area">
-        <div class="upload-icon" id="upload-icon">📄</div>
-        <p class="upload-text" id="upload-text">PDF hierher ziehen oder klicken</p>
-        <p class="muted" id="upload-subtext">Unterstützt akademische Skripte mit Formeln, Tabellen, Code &amp; Bildern</p>
-        <input type="file" id="file-input" accept=".pdf" class="hidden" />
-        <button class="btn btn-primary" id="btn-upload" style="margin-top:16px">
-          PDF auswählen
-        </button>
+      <!-- ── Fertig-Strip (ersetzt Workflow wenn alles erledigt ist) ── -->
+      <div class="workflow-done-strip hidden" id="workflow-done-strip">
+        <div class="workflow-done-status">
+          <span class="wf-done-icon">✓</span>
+          <span class="wf-done-text" id="workflow-done-text">PDF konvertiert &amp; Zusammenfassung erstellt</span>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="btn-reprocess">Neu verarbeiten</button>
       </div>
 
-      <!-- Progress bar (hidden until an operation runs) -->
+      <!-- ── Progress bar (hidden until operation starts) ─────────── -->
       <div class="progress-container hidden" id="progress-container">
         <div class="progress-header">
           <span class="progress-label" id="progress-label">Konvertiere PDF…</span>
@@ -151,8 +185,6 @@
           <div class="progress-fill" id="progress-fill"></div>
         </div>
         <p class="progress-message muted" id="progress-message"></p>
-
-        <!-- Live Log Terminal (collapsed by default) -->
         <div class="log-panel-wrapper hidden" id="log-panel-wrapper">
           <div class="log-panel-header">
             <span class="log-panel-title">Live Log</span>
@@ -162,82 +194,73 @@
         </div>
       </div>
 
-      <!-- Action buttons row -->
-      <div class="action-row">
-        <button class="btn btn-secondary" id="btn-convert" disabled>
-          <span class="btn-icon">⟳</span> In Markdown konvertieren
-        </button>
-        <button class="btn btn-accent" id="btn-summarize" disabled>
-          <span class="btn-icon">✦</span> KI-Zusammenfassung erstellen
-        </button>
-      </div>
-
-      <!-- Content tabs -->
-      <div class="content-tabs hidden" id="content-tabs">
-        <button class="tab-btn active" data-tab="markdown">Konvertiertes Markdown</button>
-        <button class="tab-btn"        data-tab="summary">Zusammenfassung</button>
-        <button class="tab-btn"        data-tab="vault">Obsidian Vault</button>
-        <button class="tab-btn"        data-tab="chat">KI-Chat</button>
-      </div>
-
-      <!-- Markdown preview -->
-      <div class="content-panel hidden" id="panel-markdown">
-        <div class="markdown-viewer" id="markdown-viewer"></div>
-      </div>
-
-      <!-- Summary preview -->
-      <div class="content-panel hidden" id="panel-summary">
-        <div class="markdown-viewer" id="summary-viewer"></div>
-      </div>
-
-      <!-- Vault panel -->
-      <div class="content-panel hidden" id="panel-vault">
-        <div class="vault-header">
-          <div class="vault-header-left">
-            <p class="vault-description">
-              Erstelle einen Obsidian Vault aus dem konvertierten Markdown –
-              jeder Abschnitt wird eine eigene Notiz mit Wikilinks und Tags.
-            </p>
-          </div>
-          <div class="vault-actions">
-            <button class="btn btn-secondary" id="btn-generate-vault">
-              <span class="btn-icon">⬡</span> Vault erstellen
-            </button>
-            <button class="btn btn-primary hidden" id="btn-open-obsidian">
-              <span class="btn-icon">📂</span> Vault-Ordner öffnen
-            </button>
-          </div>
+      <!-- ── Content Section: Tabs + Panels ───────────────────────── -->
+      <div class="results-section hidden" id="results-section">
+        <div class="content-tabs" id="content-tabs">
+          <button class="tab-btn active" data-tab="markdown">Konvertiertes Markdown</button>
+          <button class="tab-btn"        data-tab="summary">Zusammenfassung</button>
+          <button class="tab-btn"        data-tab="vault">Obsidian Vault</button>
+          <button class="tab-btn"        data-tab="chat">KI-Chat</button>
         </div>
-        <div id="vault-file-list" class="vault-file-list">
-          <p class="muted vault-empty-hint">Noch kein Vault vorhanden. Klicke auf "Vault erstellen".</p>
-        </div>
-      </div>
 
-      <!-- Chat panel -->
-      <div class="content-panel hidden" id="panel-chat">
-        <div class="chat-container">
-          <div class="chat-messages" id="chat-messages">
-            <div class="chat-welcome">
-              <div class="chat-welcome-icon">💬</div>
-              <p>Stelle eine Frage zu deinem Lernscript.</p>
-              <p class="muted">Die KI nutzt den Vault als Wissensquelle.</p>
+        <!-- Markdown panel -->
+        <div class="content-panel" id="panel-markdown">
+          <div class="markdown-viewer" id="markdown-viewer"></div>
+        </div>
+
+        <!-- Summary panel -->
+        <div class="content-panel hidden" id="panel-summary">
+          <div class="markdown-viewer" id="summary-viewer"></div>
+        </div>
+
+        <!-- Vault panel -->
+        <div class="content-panel hidden" id="panel-vault">
+          <div class="vault-panel-layout">
+            <div class="vault-panel-header">
+              <div class="vault-panel-info">
+                <h3 class="vault-panel-title">⬡ Obsidian Vault</h3>
+                <p class="muted">Jeder Abschnitt wird eine eigene Notiz mit Wikilinks und Tags.</p>
+              </div>
+              <div class="vault-actions">
+                <button class="btn btn-secondary" id="btn-generate-vault">
+                  <span class="btn-icon">⬡</span> Vault erstellen
+                </button>
+                <button class="btn btn-primary hidden" id="btn-open-obsidian">
+                  <span class="btn-icon">📂</span> Ordner öffnen
+                </button>
+              </div>
+            </div>
+            <div id="vault-file-list" class="vault-file-list">
+              <p class="muted vault-empty-hint">Noch kein Vault vorhanden. Klicke auf "Vault erstellen".</p>
             </div>
           </div>
-          <div class="chat-input-row">
-            <textarea
-              id="chat-input"
-              class="chat-input"
-              placeholder="Frage stellen… (Enter zum Senden, Shift+Enter für neue Zeile)"
-              rows="2"
-            ></textarea>
-            <button class="btn btn-accent chat-send-btn" id="btn-chat-send">
-              ➤
-            </button>
-          </div>
-          <p class="chat-hint muted" id="chat-hint">
-            Vault als Wissensquelle · Kein Vault vorhanden – bitte zuerst erstellen
-          </p>
         </div>
+
+        <!-- Chat panel -->
+        <div class="content-panel hidden" id="panel-chat">
+          <div class="chat-container">
+            <div class="chat-messages" id="chat-messages">
+              <div class="chat-welcome">
+                <div class="chat-welcome-icon">💬</div>
+                <p>Stelle eine Frage zu deinem Lernscript.</p>
+                <p class="muted">Die KI nutzt den Vault als Wissensquelle.</p>
+              </div>
+            </div>
+            <div class="chat-input-row">
+              <textarea
+                id="chat-input"
+                class="chat-input"
+                placeholder="Frage stellen… (Enter zum Senden, Shift+Enter für neue Zeile)"
+                rows="2"
+              ></textarea>
+              <button class="btn btn-accent chat-send-btn" id="btn-chat-send">➤</button>
+            </div>
+            <p class="chat-hint muted" id="chat-hint">
+              Vault als Wissensquelle · Kein Vault vorhanden – bitte zuerst erstellen
+            </p>
+          </div>
+        </div>
+
       </div>
 
     </section>

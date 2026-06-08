@@ -31,6 +31,7 @@ from dotenv import load_dotenv
 # is available for Claude vision calls without polluting the system environment.
 load_dotenv(Path(__file__).parent.parent / ".env")
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from chat_service import ChatService
@@ -257,6 +258,15 @@ async def get_markdown(safe_name: str):
     if not md_files:
         raise HTTPException(status_code=404, detail="Noch kein konvertiertes Markdown vorhanden.")
     return {"content": md_files[0].read_text(encoding="utf-8")}
+
+
+@app.get("/folders/{safe_name}/image/{filename}")
+async def get_image(safe_name: str, filename: str):
+    """Serve a converted image file for in-app preview."""
+    image_path = BASE_DATA_DIR / safe_name / "converted" / "images" / filename
+    if not image_path.exists() or not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Bild nicht gefunden.")
+    return FileResponse(str(image_path))
 
 
 @app.get("/folders/{safe_name}/summary")

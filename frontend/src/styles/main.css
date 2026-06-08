@@ -1318,3 +1318,252 @@ html, body {
   font-size: 11px;
   margin: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REDESIGN – Workflow Cards + Tools Section
+═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Workflow Section ──────────────────────────────────────────────────── */
+.workflow-section {
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 24px;
+  gap: 0;
+}
+
+.wf-card {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: border-color 0.4s, background 0.4s;
+  min-width: 0;
+}
+
+.wf-card.active  { border-color: var(--accent);                  background: rgba(139,92,246,0.04); }
+.wf-card.complete { border-color: rgba(74,222,128,0.45); }
+
+/* Step circle re-styled inside workflow cards */
+.wf-card .step-circle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  border: 2px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: all 0.4s;
+}
+.wf-card.active  .step-circle { border-color: var(--accent);  color: var(--accent-bright); background: var(--accent-glow); }
+.wf-card.complete .step-circle { border-color: var(--success); color: var(--success);       background: rgba(74,222,128,0.15); }
+
+.wf-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.wf-card-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  transition: color 0.4s;
+}
+.wf-card.active  .wf-card-label { color: var(--accent-bright); }
+.wf-card.complete .wf-card-label { color: var(--success); }
+
+.wf-card-body {
+  flex: 1;
+}
+
+/* Upload zone embedded in wf-card */
+.wf-card-upload {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 16px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color 0.25s, background 0.25s;
+  gap: 4px;
+}
+.wf-card-upload:hover,
+.wf-card-upload.drag-over {
+  border-color: var(--accent);
+  background: rgba(139,92,246,0.05);
+}
+.wf-card-upload .upload-icon { font-size: 32px; margin-bottom: 4px; display: block; }
+.wf-card-upload .upload-text { font-size: 13px; font-weight: 600; }
+
+/* Full-width action button at bottom of wf-card */
+.wf-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+/* Arrow connector between cards */
+.wf-arrow {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: 20px;
+  flex-shrink: 0;
+  padding-top: 28px; /* align with circle row */
+}
+
+/* ── Section Headings ─────────────────────────────────────────────────── */
+.section-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+/* ── Results Section ──────────────────────────────────────────────────── */
+.results-section {
+  margin-bottom: 32px;
+}
+
+/* ── Tools Section ────────────────────────────────────────────────────── */
+.tools-section {
+  margin-bottom: 32px;
+}
+
+.tools-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.tool-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tool-card-top {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.tool-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+  line-height: 1;
+  padding-top: 2px;
+}
+
+.tool-card-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 3px;
+  color: var(--text-primary);
+}
+
+.tool-card-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Chat card – give messages area a fixed scrollable height */
+.tool-card-chat .chat-messages {
+  max-height: 260px;
+  min-height: 100px;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+/* Vault file list inside tool card – limit height */
+.tool-card .vault-file-list {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+/* ── Workflow Done Strip ──────────────────────────────────────────────── */
+.workflow-done-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(74, 222, 128, 0.06);
+  border: 1px solid rgba(74, 222, 128, 0.25);
+  border-radius: var(--radius-lg);
+  padding: 12px 20px;
+  margin-bottom: 20px;
+}
+
+.workflow-done-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wf-done-icon {
+  color: var(--success);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.wf-done-text {
+  font-size: 13px;
+  color: var(--success);
+  font-weight: 500;
+}
+
+.btn-sm {
+  padding: 6px 14px;
+  font-size: 12px;
+}
+
+/* ── Vault Panel Layout (inside content-panel tab) ───────────────────── */
+.vault-panel-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.vault-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.vault-panel-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.vault-panel-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+/* ── Sidebar – Locked Item ────────────────────────────────────────────── */
+.sidebar-folder-item.locked {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
