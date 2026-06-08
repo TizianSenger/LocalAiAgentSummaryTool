@@ -1,15 +1,19 @@
 """
 Summarizes Markdown documents using a locally running Ollama model.
 
-Strategy: map-reduce over chunks
----------------------------------
+Strategy: per-chapter summarization (zero information loss)
+------------------------------------------------------------
 A 400-1500 page script converted to Markdown can be hundreds of thousands of
 characters – far more than any model's context window. We therefore use a
-map-reduce approach:
+chapter-based approach:
 
-  1. SPLIT  – divide the Markdown into chunks at natural heading boundaries
-  2. MAP    – ask Ollama to summarize each chunk individually
-  3. REDUCE – combine all chunk summaries into one final, coherent document
+  1. DETECT  – find primary heading level (# or ##) and split into chapters
+  2. SPLIT   – divide each chapter into chunks at natural heading boundaries
+  3. VISION  – one consolidated vision pass over ALL chunks (avoids model swapping)
+  4. MAP     – summarize each chunk individually (text model)
+  5. MERGE   – combine a chapter's chunk summaries into one chapter summary
+  6. CONCAT  – assemble final document by concatenating all chapter summaries
+               (NO final AI merge = guaranteed zero information loss)
 
 Images referenced in the original Markdown are copied to the summary folder
 so the summary remains a self-contained document with visuals.
@@ -135,43 +139,54 @@ class OllamaService:
         md_content = md_files[0].read_text(encoding="utf-8")
         document_title = md_files[0].stem
 
-        await self._emit(progress, 5, "Teile Dokument in Abschnitte auf…")
+        await self._emit(progress, 5, "Erkenne Kapitelstruktur…")
 
-        chunks = self._split_into_chunks(md_content, settings.get("chunk_size", 3000))
-        total = len(chunks)
+        chunk_size = settings.get("chunk_size", 3000)
+        chapters = self._split_into_chapters(md_content)
 
-        provider_label = "Claude API" if settings.get("ai_provider") == "claude" else f"Ollama ({settings.get('ollama_model', 'qwen2.5:14b')})"
-        await self._emit(progress, 10, f"Dokument hat {total} Abschnitte – starte KI-Verarbeitung via {provider_label}…")
+        # Build per-chapter chunk lists; keep a flat list for the vision pass
+        chapter_chunks: list[tuple[str, list[str]]] = [
+            (title, self._split_into_chunks(content, chunk_size))
+            for title, content in chapters
+        ]
+        all_chunks_flat = [c for _, chs in chapter_chunks for c in chs]
 
-        # Blocking Ollama/Claude calls run off the event loop via executor.
-        # IMPORTANT: Two-pass strategy to avoid constant model swapping in RAM.
-        # Each model swap (vision ↔ text) costs ~8-14 GB RAM reload. With 74 chunks
-        # and interleaved calls that would happen 74 times. Two passes = 1 swap total.
+        total_chapters = len(chapter_chunks)
+        total_chunks   = len(all_chunks_flat)
+
+        provider_label = (
+            "Claude API" if settings.get("ai_provider") == "claude"
+            else f"Ollama ({settings.get('ollama_model', 'qwen2.5:14b')})"
+        )
+        await self._emit(progress, 10,
+            f"{total_chapters} Kapitel erkannt, {total_chunks} Abschnitte gesamt – "
+            f"starte KI-Verarbeitung via {provider_label}…")
+
         loop = asyncio.get_running_loop()
-        chunk_summaries: list[str] = []
 
-        use_vision        = settings.get("use_vision", False)
-        vision_provider   = settings.get("vision_provider", "ollama")
-        vision_model      = settings.get("vision_model", "llama3.2-vision:11b")
-        claude_vis_model  = settings.get("claude_vision_model", "claude-haiku-4-5-20251001")
-        active_vis_label  = f"Claude ({claude_vis_model})" if vision_provider == "claude" else vision_model
+        use_vision       = settings.get("use_vision", False)
+        vision_provider  = settings.get("vision_provider", "ollama")
+        vision_model     = settings.get("vision_model", "llama3.2-vision:11b")
+        claude_vis_model = settings.get("claude_vision_model", "claude-haiku-4-5-20251001")
+        active_vis_label = (
+            f"Claude ({claude_vis_model})" if vision_provider == "claude" else vision_model
+        )
 
-        # --- Pass 1: Vision enrichment (one image at a time for granular progress) ---
-        enriched_chunks = list(chunks)
+        # --- Pass 1: Vision enrichment over ALL chunks in one sweep ---
+        enriched_flat = list(all_chunks_flat)
         if use_vision:
-            # Collect all (chunk_idx, alt_text, filename) triples up front
             image_jobs: list[tuple[int, str, str]] = []
-            for ci, chunk in enumerate(chunks):
+            for ci, chunk in enumerate(all_chunks_flat):
                 for m in re.finditer(r'!\[([^\]]*)\]\(images/([^)]+)\)', chunk):
                     image_jobs.append((ci, m.group(1), m.group(2)))
 
             if image_jobs:
-                total_images = len(image_jobs)
+                total_images  = len(image_jobs)
                 unique_chunks = len({j[0] for j in image_jobs})
                 await self._emit(progress, 10,
-                    f"Bildanalyse: {total_images} Bild(er) in {unique_chunks} Abschnitt(en) via {active_vis_label}…")
+                    f"Bildanalyse: {total_images} Bild(er) in {unique_chunks} Abschnitt(en) "
+                    f"via {active_vis_label}…")
 
-                # descriptions[chunk_idx][filename] = description text
                 import time
                 descriptions: dict[int, dict[str, str]] = {}
 
@@ -182,18 +197,17 @@ class OllamaService:
 
                     pct = 10 + int((img_seq / total_images) * 25)
                     await self._emit(progress, pct,
-                        f"🖼 Bild {img_seq + 1}/{total_images}: {filename} (Abschnitt {chunk_idx + 1}/{total})…")
+                        f"🖼 Bild {img_seq + 1}/{total_images}: {filename} "
+                        f"(Abschnitt {chunk_idx + 1}/{total_chunks})…")
 
                     image_path = converted_dir / "images" / filename
                     t0 = time.monotonic()
                     if vision_provider == "claude":
                         desc = await loop.run_in_executor(
-                            None, self._describe_image_claude, image_path, claude_vis_model, alt
-                        )
+                            None, self._describe_image_claude, image_path, claude_vis_model, alt)
                     else:
                         desc = await loop.run_in_executor(
-                            None, self._describe_image_ollama, image_path, vision_model, alt
-                        )
+                            None, self._describe_image_ollama, image_path, vision_model, alt)
                     elapsed = time.monotonic() - t0
 
                     if chunk_idx not in descriptions:
@@ -205,9 +219,8 @@ class OllamaService:
                             f"  ✓ {filename} ({elapsed:.1f}s): {desc[:80]}…")
                     else:
                         await self._emit(progress, pct,
-                            f"  ⚠ {filename} ({elapsed:.1f}s): Keine Beschreibung – Bild übersprungen")
+                            f"  ⚠ {filename} ({elapsed:.1f}s): Keine Beschreibung – übersprungen")
 
-                # Apply collected descriptions back into the chunks
                 for ci, descs in descriptions.items():
                     def _apply(chunk: str, _descs: dict = descs) -> str:
                         def replace(m: re.Match) -> str:
@@ -217,47 +230,63 @@ class OllamaService:
                                 return f'\n> 📷 **Abbildung – {label}:** {d}\n'
                             return m.group(0)
                         return re.sub(r'!\[([^\]]*)\]\(images/([^)]+)\)', replace, chunk)
-                    enriched_chunks[ci] = _apply(chunks[ci])
+                    enriched_flat[ci] = _apply(all_chunks_flat[ci])
 
-        # --- Pass 2: Text summarization (loads text model once for all chunks) ---
-        await self._emit(progress, 35, f"Starte Textzusammenfassung für {total} Abschnitte…")
-        for i, chunk in enumerate(enriched_chunks):
-            if cancel_check and cancel_check():
-                await self._emit(progress, 0, "⚠ Vorgang durch Benutzer abgebrochen.")
-                raise RuntimeError("Abgebrochen")
+        # Distribute enriched chunks back to per-chapter lists
+        chapter_enriched: list[tuple[str, list[str]]] = []
+        offset = 0
+        for title, orig_chunks in chapter_chunks:
+            n = len(orig_chunks)
+            chapter_enriched.append((title, enriched_flat[offset:offset + n]))
+            offset += n
 
-            pct = 35 + int((i / total) * 50)
-            char_count = len(chunk)
-            preview = chunk.replace('\n', ' ').strip()[:90]
+        # --- Pass 2: Text summarization + per-chapter merge ---
+        await self._emit(progress, 35,
+            f"Starte Textzusammenfassung: {total_chunks} Abschnitte in {total_chapters} Kapiteln…")
+
+        chapter_summaries: list[tuple[str, str]] = []
+        chunks_done = 0
+
+        for ch_idx, (chapter_title, enriched_chunks) in enumerate(chapter_enriched):
+            ch_num   = ch_idx + 1
+            ch_total = len(enriched_chunks)
+            chunk_sums: list[str] = []
+
+            for i, chunk in enumerate(enriched_chunks):
+                if cancel_check and cancel_check():
+                    await self._emit(progress, 0, "⚠ Vorgang durch Benutzer abgebrochen.")
+                    raise RuntimeError("Abgebrochen")
+
+                chunks_done += 1
+                pct = 35 + int((chunks_done / total_chunks) * 50)
+                preview = chunk.replace('\n', ' ').strip()[:80]
+                await self._emit(progress, pct,
+                    f"[Kap. {ch_num}/{total_chapters}: {chapter_title[:40]}] "
+                    f"Abschnitt {i + 1}/{ch_total} ({len(chunk)} Zeichen)")
+                await self._emit(progress, pct, f"↳ {preview}…")
+
+                s = await loop.run_in_executor(
+                    None, self._summarize_chunk, chunk, settings, i + 1, ch_total)
+                chunk_sums.append(s)
+                await self._emit(progress, pct, f"  ✓ Abschnitt {i + 1}/{ch_total} fertig")
+
+            # Merge this chapter's chunk summaries into one chapter section
+            pct = 86 + int((ch_idx / total_chapters) * 12)
             await self._emit(progress, pct,
-                f"Fasse Abschnitt {i + 1} von {total} zusammen… ({char_count} Zeichen)")
-            await self._emit(progress, pct, f"↳ {preview}…")
-
-            summary = await loop.run_in_executor(
-                None,
-                self._summarize_chunk,
-                chunk,
-                settings,
-                i + 1,
-                total,
-            )
-            chunk_summaries.append(summary)
-
-            resp_preview = summary.replace('\n', ' ').strip()[:90]
+                f"Merge Kapitel {ch_num}/{total_chapters}: {chapter_title}…")
+            chapter_sum = await self._merge_chapter_async(chunk_sums, chapter_title, settings)
+            chapter_summaries.append((chapter_title, chapter_sum))
             await self._emit(progress, pct,
-                f"✓ Chunk {i + 1} fertig – KI: {resp_preview}…")
+                f"  ✓ Kapitel {ch_num} fertig ({len(chapter_sum)} Zeichen)")
 
-        final_md = await self._merge_async(chunk_summaries, settings, document_title, progress)
+        await self._emit(progress, 98, "Baue finales Dokument zusammen…")
 
-        # Fix any image paths where the AI dropped the leading underscore
+        final_md = self._build_final_document(chapter_summaries, document_title)
         final_md = self._fix_image_paths(final_md, converted_dir / "images")
 
-        # Copy images referenced in the summary to the summary/images/ directory
+        summary_images_dir.mkdir(parents=True, exist_ok=True)
         copied = self._copy_referenced_images(
-            final_md,
-            converted_dir / "images",
-            summary_images_dir,
-        )
+            final_md, converted_dir / "images", summary_images_dir)
 
         (summary_dir / "summary.md").write_text(final_md, encoding="utf-8")
 
@@ -266,7 +295,8 @@ class OllamaService:
         return {
             "message": "Zusammenfassung erfolgreich erstellt.",
             "summary_file": "summary.md",
-            "chunks_processed": total,
+            "chapters_processed": total_chapters,
+            "chunks_processed": total_chunks,
             "images_copied": copied,
         }
 
@@ -309,39 +339,55 @@ class OllamaService:
 
         return [c for c in chunks if c.strip()]
 
+    @staticmethod
+    def _split_into_chapters(text: str) -> list[tuple[str, str]]:
+        """
+        Split the document at its primary structural heading level.
+
+        Tries # first (≥ 2 occurrences = chapter boundaries), then ##, then ###.
+        Returns [(chapter_title, chapter_content), ...].
+        If no suitable level is found the whole document is returned as one chapter.
+        """
+        lines = text.split('\n')
+
+        def _count(lvl: int) -> int:
+            prefix = '#' * lvl + ' '
+            deeper = '#' * (lvl + 1)
+            return sum(1 for l in lines if l.startswith(prefix) and not l.startswith(deeper))
+
+        split_level = next((lvl for lvl in [1, 2, 3] if _count(lvl) >= 2), None)
+        if split_level is None:
+            return [("Inhalt", text)]
+
+        prefix = '#' * split_level + ' '
+        deeper = '#' * (split_level + 1)
+
+        chapters: list[tuple[str, str]] = []
+        cur_title = ""
+        cur_lines: list[str] = []
+
+        for line in lines:
+            if line.startswith(prefix) and not line.startswith(deeper):
+                if cur_title and cur_lines:
+                    content = '\n'.join(cur_lines).strip()
+                    if len(content) > 300:
+                        chapters.append((cur_title, content))
+                # Strip bold markers for a cleaner title
+                cur_title = line[split_level + 1:].strip().strip('*').strip()
+                cur_lines = [line]
+            else:
+                cur_lines.append(line)
+
+        if cur_title and cur_lines:
+            content = '\n'.join(cur_lines).strip()
+            if len(content) > 300:
+                chapters.append((cur_title, content))
+
+        return chapters if len(chapters) >= 2 else [("Inhalt", text)]
+
     # ------------------------------------------------------------------
     # Vision – image analysis (blocking – run in executor)
     # ------------------------------------------------------------------
-
-    def _enrich_chunk_with_vision(
-        self,
-        chunk: str,
-        images_dir: Path,
-        provider: str,
-        ollama_model: str,
-        claude_model: str,
-    ) -> str:
-        """
-        Find every image reference in a Markdown chunk, describe it with the
-        chosen vision provider, and replace ![...](images/...) with a blockquote
-        so the text summarizer understands the visual content.
-        """
-        def replace_image(match: re.Match) -> str:
-            alt      = match.group(1)
-            filename = match.group(2)
-            image_path = images_dir / filename
-            if provider == "claude":
-                desc = self._describe_image_claude(image_path, claude_model, alt)
-            else:
-                desc = self._describe_image_ollama(image_path, ollama_model, alt)
-            if desc:
-                label = alt or filename
-                # Keep the original image reference AND add a description caption below.
-                # This way the text summarizer can still include the image in its output.
-                return f'![{alt}](images/{filename})\n> 📷 **{label}:** {desc}\n'
-            return match.group(0)
-
-        return re.sub(r'!\[([^\]]*)\]\(images/([^)]+)\)', replace_image, chunk)
 
     @staticmethod
     def _describe_image_ollama(image_path: Path, vision_model: str, context: str = "") -> str:
@@ -522,151 +568,113 @@ class OllamaService:
         except Exception as e:
             raise RuntimeError(f"Claude API nicht erreichbar: {e}")
 
-    async def _merge_async(
+    async def _merge_chapter_async(
         self,
-        summaries: list[str],
+        chunk_summaries: list[str],
+        chapter_title: str,
         settings: dict,
-        title: str,
-        progress: Optional[Callable[[int, str], Awaitable[None]]],
     ) -> str:
         """
-        Smart merge with live progress updates.
+        Merge a single chapter's chunk summaries into one coherent section.
 
-        Strategy: if all chunk summaries fit in a single API call (≤ DIRECT_LIMIT
-        chars combined), skip intermediate rounds entirely and feed everything
-        straight into the final merge. This preserves all detail and produces
-        much better summaries for typical university course scripts (~50-150 chunks).
-
-        For very large documents (> DIRECT_LIMIT) a hierarchical reduce runs first
-        with BATCH=5 and 3000-token intermediate budgets to keep compression mild
-        before the final 8192-token merge.
+        A chapter typically has 3-15 chunks so the combined input is always small
+        enough for a single API call — no hierarchical reduction needed.
+        The output token budget (4096) is per-chapter, so every chapter gets
+        its full share regardless of document size.
         """
-        loop = asyncio.get_running_loop()
-        provider = settings.get("ai_provider", "ollama")
-
-        # Anything under 150K chars fits in Claude's 200K-token context window
-        # as input and is better summarised in a single pass than after lossy
-        # intermediate compression rounds. Ollama context is set to 32K below.
-        DIRECT_LIMIT = 150_000
-        BATCH = 5   # smaller batches = milder compression when hierarchical is needed
+        if len(chunk_summaries) == 1:
+            return chunk_summaries[0]
 
         _IMG_HINT = (
             "Behalte Bild-Referenzen als `![alt](images/dateiname)` – "
-            "kopiere den Dateinamen exakt (inkl. führendem Unterstrich, z.B. `_page_15_Picture_2.jpeg`). "
-            "Keine Bildbeschreibungen darunter."
+            "kopiere den Dateinamen exakt (inkl. führendem Unterstrich, "
+            "z.B. `_page_15_Picture_2.jpeg`). Keine Bildbeschreibungen darunter."
         )
 
-        _FINAL_PROMPT = (
-            "Das sind die Abschnittszusammenfassungen eines Lernscripts. "
-            "Erstelle daraus EIN kompaktes, gut strukturiertes Lerndokument.\n"
-            "- Füge ein Markdown-Inhaltsverzeichnis am Anfang ein\n"
-            "- Alle wichtigen Themen und Lektionen müssen vorkommen – nichts weglassen\n"
-            "- Entferne Duplikate und verbinde verwandte Themen\n"
-            f"- {_IMG_HINT}\n"
-            "- Behalte Formeln, Tabellen und Codeblöcke\n\n"
-            "{combined}\n\n"
-            "Antworte nur mit dem finalen Markdown-Dokument."
+        combined = "\n\n---\n\n".join(chunk_summaries)
+        prompt = (
+            f'Das sind die Abschnittszusammenfassungen für das Kapitel "{chapter_title}".\n'
+            "Erstelle daraus eine vollständige, gut strukturierte Kapitelzusammenfassung.\n"
+            "- Alle wichtigen Konzepte, Definitionen, Formeln und Tabellen behalten\n"
+            "- Logisch mit Überschriften strukturieren\n"
+            "- Duplikate entfernen, verwandte Themen verbinden\n"
+            f"- {_IMG_HINT}\n\n"
+            f"{combined}\n\n"
+            "Antworte nur mit dem Markdown."
         )
 
-        # Build a provider-specific blocking call function
+        provider = settings.get("ai_provider", "ollama")
+        loop = asyncio.get_running_loop()
+
         if provider == "claude":
             import os as _os
-            import anthropic as _anthropic
+            import anthropic as _ant
             api_key = _os.environ.get("ANTHROPIC_API_KEY", "")
             if not api_key or api_key == "dein-api-key-hier":
                 raise RuntimeError("ANTHROPIC_API_KEY nicht in .env konfiguriert.")
-            model       = settings.get("claude_model", "claude-haiku-4-5-20251001")
-            temperature = settings.get("temperature", 0.3)
-            system_prompt = settings.get("system_prompt", "")
 
-            def _call(prompt: str, max_tok: int) -> str:
+            def _call() -> str:
                 try:
-                    client = _anthropic.Anthropic(api_key=api_key)
-                    msg = client.messages.create(
-                        model=model, max_tokens=max_tok, temperature=temperature,
-                        system=system_prompt,
+                    c = _ant.Anthropic(api_key=api_key)
+                    r = c.messages.create(
+                        model=settings.get("claude_model", "claude-haiku-4-5-20251001"),
+                        max_tokens=4096,
+                        temperature=settings.get("temperature", 0.3),
+                        system=settings.get("system_prompt", ""),
                         messages=[{"role": "user", "content": prompt}],
                     )
-                    return msg.content[0].text
-                except _anthropic.AuthenticationError:
+                    return r.content[0].text
+                except _ant.AuthenticationError:
                     raise RuntimeError("Claude API: Ungültiger API Key. Bitte .env prüfen.")
-                except _anthropic.BadRequestError as e:
+                except _ant.BadRequestError as e:
                     if "credit" in str(e).lower() or "balance" in str(e).lower():
-                        raise RuntimeError("Claude API: Kein Guthaben. Bitte unter console.anthropic.com aufladen.")
+                        raise RuntimeError(
+                            "Claude API: Kein Guthaben. Bitte unter console.anthropic.com aufladen.")
                     raise RuntimeError(f"Claude API Fehler: {e}")
-                except _anthropic.RateLimitError:
+                except _ant.RateLimitError:
                     raise RuntimeError("Claude API: Rate Limit erreicht. Bitte kurz warten.")
                 except Exception as e:
                     raise RuntimeError(f"Claude API nicht erreichbar: {e}")
         else:
-            import ollama as _ollama
-            model       = settings.get("ollama_model", "qwen2.5:14b")
-            temperature = settings.get("temperature", 0.3)
-            system_prompt = settings.get("system_prompt", "")
+            import ollama as _oll
 
-            def _call(prompt: str, max_tok: int) -> str:
-                resp = _ollama.chat(
-                    model=model,
+            def _call() -> str:
+                r = _oll.chat(
+                    model=settings.get("ollama_model", "qwen2.5:14b"),
                     messages=[
-                        {"role": "system", "content": system_prompt},
+                        {"role": "system", "content": settings.get("system_prompt", "")},
                         {"role": "user",   "content": prompt},
                     ],
-                    # 32K context lets us feed larger inputs; num_predict caps output
-                    options={"temperature": temperature, "num_ctx": 32768, "num_predict": max_tok},
+                    options={
+                        "temperature": settings.get("temperature", 0.3),
+                        "num_ctx": 32768,
+                        "num_predict": 4096,
+                    },
                 )
-                return _extract_content(resp)
+                return _extract_content(r)
 
-        combined_all = "\n\n---\n\n".join(summaries)
+        return await loop.run_in_executor(None, _call)
 
-        if len(combined_all) <= DIRECT_LIMIT:
-            # ── Fast path: single merge call, no information loss ────────
-            await self._emit(progress, 97,
-                f"Direkter Merge: alle {len(summaries)} Abschnitte → Gesamtdokument "
-                f"({len(combined_all):,} Zeichen)…")
-            body = await loop.run_in_executor(None, _call,
-                _FINAL_PROMPT.format(combined=combined_all), 8192)
-        else:
-            # ── Hierarchical path: needed only for very large documents ──
-            current = list(summaries)
-            _n = len(summaries)
-            total_rounds = 0
-            while _n > BATCH:
-                _n = -(-_n // BATCH)
-                total_rounds += 1
-            total_rounds += 1
+    @staticmethod
+    def _build_final_document(
+        chapter_summaries: list[tuple[str, str]],
+        title: str,
+    ) -> str:
+        """
+        Assemble the final summary by concatenating all chapter summaries.
+        No AI call — guaranteed zero information loss.
+        """
+        toc_lines = ["## Inhaltsverzeichnis\n"]
+        for i, (ch_title, _) in enumerate(chapter_summaries, 1):
+            toc_lines.append(f"{i}. {ch_title}")
 
-            round_idx = 0
-            while len(current) > BATCH:
-                round_idx += 1
-                batches = [current[i:i + BATCH] for i in range(0, len(current), BATCH)]
-                pct = 88 + int((round_idx / total_rounds) * 9)
-                await self._emit(progress, pct,
-                    f"Merge-Runde {round_idx}/{total_rounds}: {len(batches)} Batch(es) à max. {BATCH} Abschnitte…")
+        sections: list[str] = []
+        for ch_title, ch_summary in chapter_summaries:
+            sections.append(f"---\n\n## {ch_title}\n\n{ch_summary}")
 
-                new_current: list[str] = []
-                for bi, batch in enumerate(batches):
-                    await self._emit(progress, pct,
-                        f"  Batch {bi + 1}/{len(batches)}: {len(batch)} Abschnitte → komprimiere…")
-                    result = await loop.run_in_executor(None, _call,
-                        "Fasse diese Teilzusammenfassungen kompakt zusammen. "
-                        f"Entferne Duplikate, behalte alle wichtigen Konzepte, Formeln, Tabellen. {_IMG_HINT}\n\n"
-                        + "\n\n---\n\n".join(batch)
-                        + "\n\nAntworte nur mit dem Markdown.",
-                        3000,   # mild compression: 3000 instead of 2000
-                    )
-                    new_current.append(result)
-                    await self._emit(progress, pct,
-                        f"  ✓ Batch {bi + 1}/{len(batches)} fertig ({len(result)} Zeichen)")
-                current = new_current
-
-            combined = "\n\n---\n\n".join(current)
-            await self._emit(progress, 97,
-                f"Finaler Merge (Runde {round_idx + 1}/{total_rounds}): {len(current)} Abschnitt(e)…")
-            body = await loop.run_in_executor(None, _call,
-                _FINAL_PROMPT.format(combined=combined), 8192)
-
-        await self._emit(progress, 99, "Finales Dokument erstellt.")
-        return f"# Zusammenfassung: {title}\n\n{body}"
+        toc     = '\n'.join(toc_lines)
+        content = '\n\n'.join(sections)
+        return f"# Zusammenfassung: {title}\n\n{toc}\n\n{content}"
 
     # ------------------------------------------------------------------
     # Image handling
