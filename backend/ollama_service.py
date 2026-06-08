@@ -143,8 +143,11 @@ class OllamaService:
         provider_label = "Claude API" if settings.get("ai_provider") == "claude" else f"Ollama ({settings.get('ollama_model', 'qwen2.5:14b')})"
         await self._emit(progress, 10, f"Dokument hat {total} Abschnitte – starte KI-Verarbeitung via {provider_label}…")
 
-        # Summarize each chunk (blocking Ollama calls run off the event loop)
-        loop = asyncio.get_event_loop()
+        # Blocking Ollama/Claude calls run off the event loop via executor.
+        # IMPORTANT: Two-pass strategy to avoid constant model swapping in RAM.
+        # Each model swap (vision ↔ text) costs ~8-14 GB RAM reload. With 74 chunks
+        # and interleaved calls that would happen 74 times. Two passes = 1 swap total.
+        loop = asyncio.get_running_loop()
         chunk_summaries: list[str] = []
 
         use_vision        = settings.get("use_vision", False)
@@ -153,32 +156,48 @@ class OllamaService:
         claude_vis_model  = settings.get("claude_vision_model", "claude-haiku-4-5-20251001")
         active_vis_label  = f"Claude ({claude_vis_model})" if vision_provider == "claude" else vision_model
 
-        for i, chunk in enumerate(chunks):
+        # --- Pass 1: Vision enrichment (loads vision model once for all chunks) ---
+        enriched_chunks = list(chunks)
+        if use_vision:
+            chunks_with_images = [
+                i for i, c in enumerate(chunks)
+                if re.search(r'!\[.*?\]\(images/', c)
+            ]
+            if chunks_with_images:
+                total_img_chunks = len(chunks_with_images)
+                await self._emit(progress, 10,
+                    f"Bildanalyse: {total_img_chunks} Abschnitt(e) mit Bildern via {active_vis_label}…")
+                for seq, i in enumerate(chunks_with_images):
+                    if cancel_check and cancel_check():
+                        await self._emit(progress, 0, "⚠ Vorgang durch Benutzer abgebrochen.")
+                        raise RuntimeError("Abgebrochen")
+                    img_count = len(re.findall(r'!\[.*?\]\(images/', chunks[i]))
+                    pct = 10 + int((seq / total_img_chunks) * 25)
+                    await self._emit(progress, pct,
+                        f"↳ Analysiere {img_count} Bild(er) in Abschnitt {i + 1}/{total}…")
+                    enriched_chunks[i] = await loop.run_in_executor(
+                        None,
+                        self._enrich_chunk_with_vision,
+                        chunks[i],
+                        converted_dir / "images",
+                        vision_provider,
+                        vision_model,
+                        claude_vis_model,
+                    )
+
+        # --- Pass 2: Text summarization (loads text model once for all chunks) ---
+        await self._emit(progress, 35, f"Starte Textzusammenfassung für {total} Abschnitte…")
+        for i, chunk in enumerate(enriched_chunks):
             if cancel_check and cancel_check():
                 await self._emit(progress, 0, "⚠ Vorgang durch Benutzer abgebrochen.")
                 raise RuntimeError("Abgebrochen")
 
-            pct = 10 + int((i / total) * 75)
+            pct = 35 + int((i / total) * 50)
             char_count = len(chunk)
             preview = chunk.replace('\n', ' ').strip()[:90]
             await self._emit(progress, pct,
                 f"Fasse Abschnitt {i + 1} von {total} zusammen… ({char_count} Zeichen)")
             await self._emit(progress, pct, f"↳ {preview}…")
-
-            # Optional: replace image references with vision model descriptions
-            if use_vision and re.search(r'!\[.*?\]\(images/', chunk):
-                img_count = len(re.findall(r'!\[.*?\]\(images/', chunk))
-                await self._emit(progress, pct,
-                    f"↳ Analysiere {img_count} Bild(er) via {active_vis_label}…")
-                chunk = await loop.run_in_executor(
-                    None,
-                    self._enrich_chunk_with_vision,
-                    chunk,
-                    converted_dir / "images",
-                    vision_provider,
-                    vision_model,
-                    claude_vis_model,
-                )
 
             summary = await loop.run_in_executor(
                 None,
