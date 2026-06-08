@@ -247,15 +247,7 @@ class OllamaService:
             await self._emit(progress, pct,
                 f"✓ Chunk {i + 1} fertig – KI: {resp_preview}…")
 
-        await self._emit(progress, 88, "Erstelle finales Dokument…")
-
-        final_md = await loop.run_in_executor(
-            None,
-            self._merge_summaries,
-            chunk_summaries,
-            settings,
-            document_title,
-        )
+        final_md = await self._merge_async(chunk_summaries, settings, document_title, progress)
 
         # Fix any image paths where the AI dropped the leading underscore
         final_md = self._fix_image_paths(final_md, converted_dir / "images")
@@ -530,11 +522,137 @@ class OllamaService:
         except Exception as e:
             raise RuntimeError(f"Claude API nicht erreichbar: {e}")
 
-    def _merge_summaries(self, summaries: list[str], settings: dict, title: str) -> str:
-        """Route final merge to Ollama or Claude based on ai_provider setting."""
-        if settings.get("ai_provider", "ollama") == "claude":
-            return self._merge_summaries_claude(summaries, settings, title)
-        return self._merge_summaries_ollama(summaries, settings, title)
+    async def _merge_async(
+        self,
+        summaries: list[str],
+        settings: dict,
+        title: str,
+        progress: Optional[Callable[[int, str], Awaitable[None]]],
+    ) -> str:
+        """
+        Hierarchical merge with live progress updates.
+
+        Reduces chunk summaries in passes of BATCH until ≤ BATCH remain,
+        then does one final merge. Intermediate calls use a tight token budget
+        (2000) so they stay compact; the final call gets the full 8192 budget.
+        Each API call runs in an executor so the event loop stays unblocked and
+        progress messages reach the UI between batches.
+        """
+        loop = asyncio.get_running_loop()
+        provider = settings.get("ai_provider", "ollama")
+        BATCH = 8
+
+        _IMG_HINT = (
+            "Behalte Bild-Referenzen als `![alt](images/dateiname)` – "
+            "kopiere den Dateinamen exakt (inkl. führendem Unterstrich, z.B. `_page_15_Picture_2.jpeg`). "
+            "Keine Bildbeschreibungen darunter."
+        )
+
+        # Build a provider-specific blocking call function
+        if provider == "claude":
+            import os as _os
+            import anthropic as _anthropic
+            api_key = _os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key or api_key == "dein-api-key-hier":
+                raise RuntimeError("ANTHROPIC_API_KEY nicht in .env konfiguriert.")
+            model      = settings.get("claude_model", "claude-haiku-4-5-20251001")
+            temperature = settings.get("temperature", 0.3)
+            system_prompt = settings.get("system_prompt", "")
+
+            def _call(prompt: str, max_tok: int) -> str:
+                try:
+                    client = _anthropic.Anthropic(api_key=api_key)
+                    msg = client.messages.create(
+                        model=model, max_tokens=max_tok, temperature=temperature,
+                        system=system_prompt,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    return msg.content[0].text
+                except _anthropic.AuthenticationError:
+                    raise RuntimeError("Claude API: Ungültiger API Key. Bitte .env prüfen.")
+                except _anthropic.BadRequestError as e:
+                    if "credit" in str(e).lower() or "balance" in str(e).lower():
+                        raise RuntimeError("Claude API: Kein Guthaben. Bitte unter console.anthropic.com aufladen.")
+                    raise RuntimeError(f"Claude API Fehler: {e}")
+                except _anthropic.RateLimitError:
+                    raise RuntimeError("Claude API: Rate Limit erreicht. Bitte kurz warten.")
+                except Exception as e:
+                    raise RuntimeError(f"Claude API nicht erreichbar: {e}")
+        else:
+            import ollama as _ollama
+            model       = settings.get("ollama_model", "qwen2.5:14b")
+            temperature = settings.get("temperature", 0.3)
+            system_prompt = settings.get("system_prompt", "")
+
+            def _call(prompt: str, max_tok: int) -> str:
+                resp = _ollama.chat(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": prompt},
+                    ],
+                    options={"temperature": temperature, "num_ctx": 16384, "num_predict": max_tok},
+                )
+                return _extract_content(resp)
+
+        # Calculate total rounds needed for display
+        n, total_rounds = len(summaries), 0
+        _n = len(summaries)
+        while _n > BATCH:
+            _n = -(-_n // BATCH)   # ceiling division
+            total_rounds += 1
+        total_rounds += 1  # +1 for the final merge
+
+        current = list(summaries)
+        round_idx = 0
+
+        # Intermediate reduce rounds
+        while len(current) > BATCH:
+            round_idx += 1
+            batches   = [current[i:i + BATCH] for i in range(0, len(current), BATCH)]
+            pct       = 88 + int((round_idx / total_rounds) * 9)   # 88 → 97 %
+            await self._emit(progress, pct,
+                f"Merge-Runde {round_idx}/{total_rounds}: {len(batches)} Batch(es) à max. {BATCH} Abschnitte…")
+
+            new_current: list[str] = []
+            for bi, batch in enumerate(batches):
+                await self._emit(progress, pct,
+                    f"  Batch {bi + 1}/{len(batches)}: {len(batch)} Abschnitte → komprimiere…")
+                result = await loop.run_in_executor(None, _call,
+                    "Fasse diese Teilzusammenfassungen zu einem kompakten Zwischenergebnis zusammen. "
+                    f"Entferne Duplikate, behalte wichtige Konzepte, Formeln, Tabellen. {_IMG_HINT}\n\n"
+                    + "\n\n---\n\n".join(batch)
+                    + "\n\nAntworte nur mit dem Markdown.",
+                    2000,   # tight budget keeps intermediates short
+                )
+                new_current.append(result)
+                await self._emit(progress, pct,
+                    f"  ✓ Batch {bi + 1}/{len(batches)} fertig ({len(result)} Zeichen)")
+            current = new_current
+
+        # Final merge
+        round_idx += 1
+        await self._emit(progress, 97,
+            f"Finaler Merge (Runde {round_idx}/{total_rounds}): {len(current)} Abschnitt(e) → Gesamtdokument…")
+        combined = "\n\n---\n\n".join(current)
+        body = await loop.run_in_executor(None, _call,
+            "Das sind die Teilzusammenfassungen eines Lernscripts. "
+            "Erstelle daraus EIN kompaktes, gut strukturiertes Lerndokument.\n"
+            "- Füge ein Markdown-Inhaltsverzeichnis am Anfang ein\n"
+            "- Entferne Duplikate konsequent und verbinde verwandte Themen\n"
+            "- Das Ergebnis muss KÜRZER sein als die Eingabe – nur das Wesentliche in einfachen Worten\n"
+            f"- {_IMG_HINT}\n"
+            "- Behalte Formeln, Tabellen und Codeblöcke\n\n"
+            f"{combined}\n\n"
+            "Antworte nur mit dem finalen Markdown-Dokument.",
+            8192,   # full budget for final output
+        )
+        await self._emit(progress, 99, "Finales Dokument erstellt.")
+        return f"# Zusammenfassung: {title}\n\n{body}"
+
+    # ------------------------------------------------------------------
+    # Image handling
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _fix_image_paths(md_text: str, images_dir: Path) -> str:
@@ -549,155 +667,8 @@ class OllamaService:
             return m.group(0)
         return re.sub(r'!\[([^\]]*)\]\(images/([^)]+)\)', _fix, md_text)
 
-    @staticmethod
-    def _merge_summaries_ollama(
-        summaries: list[str],
-        settings: dict,
-        title: str,
-    ) -> str:
-        """
-        Combine chunk summaries into one coherent Markdown document via Ollama.
-
-        For large documents, merges in batches of 5 summaries at a time (hierarchical
-        reduce), so the context window limit is never exceeded.
-        """
-        import ollama
-
-        model = settings.get("ollama_model", "qwen2.5:14b")
-        temperature = settings.get("temperature", 0.3)
-        system_prompt = settings.get("system_prompt", "")
-
-        _IMG_HINT = (
-            "Behalte Bild-Referenzen als `![alt](images/dateiname)` – "
-            "kopiere den Dateinamen exakt (inkl. führendem Unterstrich, z.B. `_page_15_Picture_2.jpeg`). "
-            "Keine Bildbeschreibungen darunter."
-        )
-
-        def _ollama_merge(parts: list[str], is_final: bool) -> str:
-            combined = "\n\n---\n\n".join(parts)
-            if is_final:
-                instruction = (
-                    "Das sind alle Teilzusammenfassungen eines Lernscripts. "
-                    "Erstelle daraus EIN einheitliches, kompaktes Lerndokument.\n"
-                    "- Füge ein Inhaltsverzeichnis am Anfang ein\n"
-                    "- Entferne Duplikate konsequent\n"
-                    "- Das Ergebnis muss KÜRZER sein als die Eingabe – fasse knapp zusammen\n"
-                    f"- {_IMG_HINT}\n"
-                    "- Behalte Formeln, Tabellen und Codeblöcke\n\n"
-                    f"{combined}\n\n"
-                    "Antworte nur mit dem finalen Markdown-Dokument."
-                )
-            else:
-                instruction = (
-                    "Fasse diese Teilzusammenfassungen zu einem kompakten Zwischenergebnis zusammen. "
-                    f"Entferne Duplikate, behalte alle wichtigen Konzepte, Formeln und Tabellen. {_IMG_HINT}\n\n"
-                    f"{combined}\n\n"
-                    "Antworte nur mit dem Markdown."
-                )
-            response = ollama.chat(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": instruction},
-                ],
-                options={"temperature": temperature, "num_ctx": 8192},
-            )
-            return _extract_content(response)
-
-        # Hierarchical merge: batch into groups of 5 until only 1 chunk remains
-        BATCH = 5
-        current = list(summaries)
-        while len(current) > BATCH:
-            batches = [current[i:i + BATCH] for i in range(0, len(current), BATCH)]
-            current = [_ollama_merge(b, is_final=False) for b in batches]
-
-        body = _ollama_merge(current, is_final=True)
-        return f"# Zusammenfassung: {title}\n\n{body}"
-
-    @staticmethod
-    def _merge_summaries_claude(summaries: list[str], settings: dict, title: str) -> str:
-        """
-        Merge chunk summaries into one compact study document using Claude API.
-
-        Uses the same hierarchical batch-reduce strategy as the Ollama path.
-        Claude haiku is capped at 8192 output tokens, so we can never send all
-        chunk summaries in one shot for large documents — we reduce in passes of
-        BATCH chunks until only one group remains.
-        """
-        import os
-        import anthropic
-
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key or api_key == "dein-api-key-hier":
-            raise RuntimeError("ANTHROPIC_API_KEY nicht in .env konfiguriert.")
-
-        model = settings.get("claude_model", "claude-haiku-4-5-20251001")
-        temperature = settings.get("temperature", 0.3)
-        system_prompt = settings.get("system_prompt", "")
-
-        def _claude_call(prompt: str) -> str:
-            try:
-                client = anthropic.Anthropic(api_key=api_key)
-                message = client.messages.create(
-                    model=model,
-                    max_tokens=8192,
-                    temperature=temperature,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                return message.content[0].text
-            except anthropic.AuthenticationError:
-                raise RuntimeError("Claude API: Ungültiger API Key. Bitte .env prüfen.")
-            except anthropic.BadRequestError as e:
-                if "credit" in str(e).lower() or "balance" in str(e).lower():
-                    raise RuntimeError(
-                        "Claude API: Kein Guthaben. Bitte unter console.anthropic.com aufladen."
-                    )
-                raise RuntimeError(f"Claude API Fehler: {e}")
-            except anthropic.RateLimitError:
-                raise RuntimeError("Claude API: Rate Limit erreicht. Bitte kurz warten.")
-            except Exception as e:
-                raise RuntimeError(f"Claude API nicht erreichbar: {e}")
-
-        _IMG_HINT = (
-            "Behalte Bild-Referenzen als `![alt](images/dateiname)` – "
-            "kopiere den Dateinamen exakt (inkl. führendem Unterstrich, z.B. `_page_15_Picture_2.jpeg`). "
-            "Keine Bildbeschreibungen darunter."
-        )
-
-        # Hierarchical reduce – identical strategy to Ollama path
-        BATCH = 8
-        current = list(summaries)
-        while len(current) > BATCH:
-            batches = [current[i:i + BATCH] for i in range(0, len(current), BATCH)]
-            current = [
-                _claude_call(
-                    "Fasse diese Teilzusammenfassungen zu einem kompakten Zwischenergebnis zusammen. "
-                    "Entferne Duplikate, behalte alle wichtigen Konzepte, Formeln und Tabellen. "
-                    f"{_IMG_HINT}\n\n"
-                    + "\n\n---\n\n".join(b)
-                    + "\n\nAntworte nur mit dem Markdown."
-                )
-                for b in batches
-            ]
-
-        combined = "\n\n---\n\n".join(current)
-        merge_prompt = (
-            "Das sind die Teilzusammenfassungen eines Lernscripts. "
-            "Erstelle daraus EIN kompaktes, gut strukturiertes Lerndokument.\n"
-            "- Füge ein Markdown-Inhaltsverzeichnis am Anfang ein\n"
-            "- Entferne Duplikate konsequent und verbinde verwandte Themen\n"
-            "- Das Ergebnis muss KÜRZER sein als die Eingabe – nur das Wesentliche in einfachen Worten\n"
-            f"- {_IMG_HINT}\n"
-            "- Behalte Formeln, Tabellen und Codeblöcke\n\n"
-            f"{combined}\n\n"
-            "Antworte nur mit dem finalen Markdown-Dokument."
-        )
-        body = _claude_call(merge_prompt)
-        return f"# Zusammenfassung: {title}\n\n{body}"
-
     # ------------------------------------------------------------------
-    # Image handling
+    # (Image copy helper — kept below)
     # ------------------------------------------------------------------
 
     @staticmethod
