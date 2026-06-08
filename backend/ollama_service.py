@@ -660,7 +660,7 @@ class OllamaService:
             "Erstelle daraus EIN kompaktes, gut strukturiertes Lerndokument.\n"
             "- Füge ein Markdown-Inhaltsverzeichnis am Anfang ein\n"
             "- Entferne Duplikate konsequent und verbinde verwandte Themen\n"
-            "- Das Ergebnis muss KÜRZER sein als die Eingabe – nur das Wesentliche\n"
+            "- Das Ergebnis muss KÜRZER sein als die Eingabe – nur das Wesentliche in einfachen Worten\n"
             "- Behalte wichtige Diagramme/Abbildungen als `![alt](images/dateiname)` – ohne Beschreibungstexte darunter\n"
             "- Behalte Formeln, Tabellen und Codeblöcke\n\n"
             f"{combined}\n\n"

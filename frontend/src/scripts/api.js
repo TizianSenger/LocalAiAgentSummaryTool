@@ -194,6 +194,34 @@ async function apiCancel(clientId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Obsidian Vault
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function apiGenerateVault(safeName, clientId) {
+    const qs = clientId ? `?client_id=${encodeURIComponent(clientId)}` : '';
+    return _req(`/folders/${encodeURIComponent(safeName)}/vault${qs}`, { method: 'POST' });
+}
+
+async function apiGetVaultFiles(safeName) {
+    return _req(`/folders/${encodeURIComponent(safeName)}/vault/files`);
+}
+
+async function apiGetVaultPath(safeName) {
+    return _req(`/folders/${encodeURIComponent(safeName)}/vault/path`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI Chat
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function apiChat(safeName, message, history) {
+    return _req(`/folders/${encodeURIComponent(safeName)}/chat`, {
+        method: 'POST',
+        body: JSON.stringify({ message, history }),
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Ollama
 // ─────────────────────────────────────────────────────────────────────────────
 

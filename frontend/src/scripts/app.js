@@ -86,8 +86,21 @@ const dom = {
     contentTabs:    $('content-tabs'),
     panelMarkdown:  $('panel-markdown'),
     panelSummary:   $('panel-summary'),
+    panelVault:     $('panel-vault'),
+    panelChat:      $('panel-chat'),
     markdownViewer: $('markdown-viewer'),
     summaryViewer:  $('summary-viewer'),
+
+    // Vault
+    btnGenerateVault:  $('btn-generate-vault'),
+    btnOpenObsidian:   $('btn-open-obsidian'),
+    vaultFileList:     $('vault-file-list'),
+
+    // Chat
+    chatMessages:  $('chat-messages'),
+    chatInput:     $('chat-input'),
+    btnChatSend:   $('btn-chat-send'),
+    chatHint:      $('chat-hint'),
 
     // Steps
     stepUpload:   $('step-upload'),
@@ -318,20 +331,42 @@ function _openFolder(folder) {
     }
 
     // Load content previews if they exist
-    dom.contentTabs.classList.toggle('hidden', !folder.has_markdown && !folder.has_summary);
+    const hasContent = folder.has_markdown || folder.has_summary || folder.has_vault;
+    dom.contentTabs.classList.toggle('hidden', !hasContent);
     dom.panelMarkdown.classList.add('hidden');
     dom.panelSummary.classList.add('hidden');
+    dom.panelVault.classList.add('hidden');
+    dom.panelChat.classList.add('hidden');
 
     if (folder.has_markdown) {
         _loadMarkdownPreview();
     }
+    if (folder.has_vault) {
+        _loadVaultFileList();
+        _updateVaultButtons(true);
+    } else {
+        _updateVaultButtons(false);
+    }
     if (folder.has_summary) {
         _loadSummaryPreview();
-        // Default to showing summary if both exist
         _switchTab('summary');
     } else if (folder.has_markdown) {
         _switchTab('markdown');
+    } else if (folder.has_vault) {
+        _switchTab('vault');
     }
+
+    // Reset chat
+    _chatHistory = [];
+    dom.chatMessages.innerHTML = `
+        <div class="chat-welcome">
+          <div class="chat-welcome-icon">💬</div>
+          <p>Stelle eine Frage zu deinem Lernscript.</p>
+          <p class="muted">Die KI nutzt den Vault als Wissensquelle.</p>
+        </div>`;
+    dom.chatHint.textContent = folder.has_vault
+        ? 'Vault als Wissensquelle · ' + (folder.has_vault ? 'Vault bereit' : 'Bitte zuerst Vault erstellen')
+        : 'Kein Vault vorhanden – bitte zuerst erstellen';
 
     // Switch views
     dom.viewHome.classList.add('hidden');
@@ -669,7 +704,7 @@ async function _loadSummaryPreview() {
     } catch { /* not critical */ }
 }
 
-/** Switch between the Markdown and Summary content tabs. */
+/** Switch between content tabs. */
 function _switchTab(tabName) {
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tabName);
@@ -677,9 +712,151 @@ function _switchTab(tabName) {
 
     dom.panelMarkdown.classList.toggle('hidden', tabName !== 'markdown');
     dom.panelSummary.classList.toggle('hidden',  tabName !== 'summary');
+    dom.panelVault.classList.toggle('hidden',    tabName !== 'vault');
+    dom.panelChat.classList.toggle('hidden',     tabName !== 'chat');
 
     if (tabName === 'markdown') animateViewIn(dom.panelMarkdown);
     if (tabName === 'summary')  animateViewIn(dom.panelSummary);
+    if (tabName === 'vault')    animateViewIn(dom.panelVault);
+    if (tabName === 'chat')     { animateViewIn(dom.panelChat); dom.chatInput.focus(); }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Obsidian Vault
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function _generateVault() {
+    if (!state.currentFolder || state.operationRunning) return;
+
+    state.operationRunning = true;
+    dom.btnGenerateVault.disabled = true;
+    _showProgress('Erstelle Obsidian Vault…');
+
+    try {
+        const result = await apiGenerateVault(state.currentFolder.safe_name, state.clientId);
+        state.currentFolder.has_vault = true;
+        _updateVaultButtons(true);
+        await _loadVaultFileList();
+        dom.contentTabs.classList.remove('hidden');
+        _switchTab('vault');
+        await _loadFolders();
+        _showToast(`Vault erstellt! ${result.note_count} Notizen`);
+    } catch (err) {
+        _showToast('Vault-Fehler: ' + err.message);
+    } finally {
+        _hideProgress();
+        state.operationRunning = false;
+        dom.btnGenerateVault.disabled = false;
+    }
+}
+
+async function _loadVaultFileList() {
+    if (!state.currentFolder) return;
+    try {
+        const files = await apiGetVaultFiles(state.currentFolder.safe_name);
+        if (!files.length) {
+            dom.vaultFileList.innerHTML = '<p class="muted vault-empty-hint">Vault ist leer.</p>';
+            return;
+        }
+        dom.vaultFileList.innerHTML = files.map(f => `
+            <div class="vault-file-item">
+              <span class="vault-file-icon">⬡</span>
+              <span class="vault-file-title">${_esc(f.title)}</span>
+              <span class="vault-file-size muted">${f.size_kb} KB</span>
+            </div>
+        `).join('');
+    } catch { /* ignore */ }
+}
+
+function _updateVaultButtons(hasVault) {
+    dom.btnOpenObsidian.classList.toggle('hidden', !hasVault);
+}
+
+async function _openVaultInObsidian() {
+    if (!state.currentFolder) return;
+    try {
+        const { vault_path } = await apiGetVaultPath(state.currentFolder.safe_name);
+        if (window.electronAPI?.openPath) {
+            await window.electronAPI.openPath(vault_path);
+        }
+        _showToast('Vault-Ordner geöffnet – in Obsidian: Tresor öffnen → Ordner als Tresor öffnen');
+    } catch (err) {
+        _showToast('Fehler: ' + err.message);
+    }
+}
+
+async function _openVaultFolder() {
+    return _openVaultInObsidian();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI Chat
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _chatHistory = [];   // [{role, content}]
+let _chatBusy = false;
+
+async function _sendChatMessage() {
+    if (_chatBusy || !state.currentFolder) return;
+    const text = dom.chatInput.value.trim();
+    if (!text) return;
+
+    dom.chatInput.value = '';
+    _appendChatBubble('user', text);
+    _chatHistory.push({ role: 'user', content: text });
+
+    _chatBusy = true;
+    dom.btnChatSend.disabled = true;
+
+    const thinking = _appendChatBubble('assistant', '…');
+
+    try {
+        const { answer, sources } = await apiChat(
+            state.currentFolder.safe_name,
+            text,
+            _chatHistory.slice(-10),   // last 10 messages as context
+        );
+
+        thinking.querySelector('.chat-bubble-text').innerHTML =
+            marked.parse(answer);
+
+        if (sources?.length) {
+            const sourceEl = document.createElement('div');
+            sourceEl.className = 'chat-sources';
+            sourceEl.textContent = 'Quellen: ' + sources.join(' · ');
+            thinking.appendChild(sourceEl);
+        }
+
+        _chatHistory.push({ role: 'assistant', content: answer });
+    } catch (err) {
+        thinking.querySelector('.chat-bubble-text').textContent =
+            'Fehler: ' + err.message;
+        _chatHistory.pop(); // remove failed user message
+    } finally {
+        _chatBusy = false;
+        dom.btnChatSend.disabled = false;
+        dom.chatInput.focus();
+    }
+}
+
+function _appendChatBubble(role, text) {
+    // Remove welcome message on first real message
+    dom.chatMessages.querySelector('.chat-welcome')?.remove();
+
+    const bubble = document.createElement('div');
+    bubble.className = `chat-bubble chat-bubble-${role}`;
+
+    const content = document.createElement('div');
+    content.className = 'chat-bubble-text';
+    if (role === 'assistant' && text !== '…') {
+        content.innerHTML = marked.parse(text);
+    } else {
+        content.textContent = text;
+    }
+    bubble.appendChild(content);
+    dom.chatMessages.appendChild(bubble);
+    dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
+    return bubble;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -905,6 +1082,19 @@ function _wireUIEvents() {
     // Action buttons
     dom.btnConvert.addEventListener('click',   _convertPdf);
     dom.btnSummarize.addEventListener('click', _summarize);
+
+    // Vault buttons
+    dom.btnGenerateVault.addEventListener('click',  _generateVault);
+    dom.btnOpenObsidian.addEventListener('click',   _openVaultInObsidian);
+
+    // Chat
+    dom.btnChatSend.addEventListener('click', _sendChatMessage);
+    dom.chatInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            _sendChatMessage();
+        }
+    });
 
     // Content tabs
     document.querySelectorAll('.tab-btn').forEach(btn => {

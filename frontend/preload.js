@@ -21,4 +21,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     /** Called if the backend fails to start within the timeout. */
     onBackendError: cb => ipcRenderer.on('backend:error', (_, msg) => cb(msg)),
+
+    // ── Shell helpers ─────────────────────────────────────────────────────
+    openExternal: url  => ipcRenderer.invoke('shell:openExternal', url),
+    openPath:     path => ipcRenderer.invoke('shell:openPath', path),
 });

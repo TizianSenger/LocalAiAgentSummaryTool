@@ -68,10 +68,12 @@ class FolderManager:
             original_dir = folder_path / "original"
             converted_dir = folder_path / "converted"
             summary_dir = folder_path / "summary"
+            vault_dir = folder_path / "vault"
 
             pdf_files = list(original_dir.glob("*.pdf")) if original_dir.exists() else []
             md_files = list(converted_dir.glob("*.md")) if converted_dir.exists() else []
             summary_files = list(summary_dir.glob("*.md")) if summary_dir.exists() else []
+            vault_files = list(vault_dir.glob("*.md")) if vault_dir.exists() else []
 
             folders.append(FolderInfo(
                 name=meta["name"],
@@ -80,6 +82,7 @@ class FolderManager:
                 has_pdf=bool(pdf_files),
                 has_markdown=bool(md_files),
                 has_summary=bool(summary_files),
+                has_vault=bool(vault_files),
                 created_at=meta["created_at"],
                 pdf_filename=pdf_files[0].name if pdf_files else None,
             ))

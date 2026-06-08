@@ -176,6 +176,8 @@
       <div class="content-tabs hidden" id="content-tabs">
         <button class="tab-btn active" data-tab="markdown">Konvertiertes Markdown</button>
         <button class="tab-btn"        data-tab="summary">Zusammenfassung</button>
+        <button class="tab-btn"        data-tab="vault">Obsidian Vault</button>
+        <button class="tab-btn"        data-tab="chat">KI-Chat</button>
       </div>
 
       <!-- Markdown preview -->
@@ -187,6 +189,57 @@
       <div class="content-panel hidden" id="panel-summary">
         <div class="markdown-viewer" id="summary-viewer"></div>
       </div>
+
+      <!-- Vault panel -->
+      <div class="content-panel hidden" id="panel-vault">
+        <div class="vault-header">
+          <div class="vault-header-left">
+            <p class="vault-description">
+              Erstelle einen Obsidian Vault aus dem konvertierten Markdown –
+              jeder Abschnitt wird eine eigene Notiz mit Wikilinks und Tags.
+            </p>
+          </div>
+          <div class="vault-actions">
+            <button class="btn btn-secondary" id="btn-generate-vault">
+              <span class="btn-icon">⬡</span> Vault erstellen
+            </button>
+            <button class="btn btn-primary hidden" id="btn-open-obsidian">
+              <span class="btn-icon">📂</span> Vault-Ordner öffnen
+            </button>
+          </div>
+        </div>
+        <div id="vault-file-list" class="vault-file-list">
+          <p class="muted vault-empty-hint">Noch kein Vault vorhanden. Klicke auf "Vault erstellen".</p>
+        </div>
+      </div>
+
+      <!-- Chat panel -->
+      <div class="content-panel hidden" id="panel-chat">
+        <div class="chat-container">
+          <div class="chat-messages" id="chat-messages">
+            <div class="chat-welcome">
+              <div class="chat-welcome-icon">💬</div>
+              <p>Stelle eine Frage zu deinem Lernscript.</p>
+              <p class="muted">Die KI nutzt den Vault als Wissensquelle.</p>
+            </div>
+          </div>
+          <div class="chat-input-row">
+            <textarea
+              id="chat-input"
+              class="chat-input"
+              placeholder="Frage stellen… (Enter zum Senden, Shift+Enter für neue Zeile)"
+              rows="2"
+            ></textarea>
+            <button class="btn btn-accent chat-send-btn" id="btn-chat-send">
+              ➤
+            </button>
+          </div>
+          <p class="chat-hint muted" id="chat-hint">
+            Vault als Wissensquelle · Kein Vault vorhanden – bitte zuerst erstellen
+          </p>
+        </div>
+      </div>
+
     </section>
 
   </main><!-- /main-content -->

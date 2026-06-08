@@ -9,7 +9,7 @@
  *  5. Kill the backend when the app quits
  */
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
@@ -153,6 +153,9 @@ ipcMain.on('window:maximize',  () => {
     mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
 });
 ipcMain.on('window:close',     () => mainWindow?.close());
+
+ipcMain.handle('shell:openExternal', (_, url)  => shell.openExternal(url));
+ipcMain.handle('shell:openPath',     (_, path) => shell.openPath(path));
 
 // ---------------------------------------------------------------------------
 // App lifecycle

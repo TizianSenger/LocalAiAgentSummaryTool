@@ -28,8 +28,15 @@ class FolderInfo(BaseModel):
     has_pdf: bool
     has_markdown: bool
     has_summary: bool
+    has_vault: bool = False
     created_at: str
     pdf_filename: Optional[str] = None
+
+
+class ChatMessage(BaseModel):
+    """A single message in a chat exchange."""
+    message: str
+    history: list[dict] = []
 
 
 class FolderSettings(BaseModel):

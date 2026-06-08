@@ -33,11 +33,13 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from chat_service import ChatService
 from folder_manager import FolderManager
-from models import FolderCreate
+from models import ChatMessage, FolderCreate
 from ollama_service import OllamaService
 from pdf_converter import PDFConverter
 from settings_manager import SettingsManager
+from vault_service import VaultService
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -50,6 +52,8 @@ folder_manager = FolderManager(BASE_DATA_DIR)
 pdf_converter = PDFConverter()
 ollama_service = OllamaService()
 settings_manager = SettingsManager()
+vault_service = VaultService()
+chat_service = ChatService()
 
 # Maps client_id → open WebSocket; used to push progress updates
 _websockets: dict[str, WebSocket] = {}
@@ -262,6 +266,60 @@ async def get_summary(safe_name: str):
     if not summary_path.exists():
         raise HTTPException(status_code=404, detail="Noch keine Zusammenfassung vorhanden.")
     return {"content": summary_path.read_text(encoding="utf-8")}
+
+
+# ---------------------------------------------------------------------------
+# Obsidian Vault
+# ---------------------------------------------------------------------------
+
+
+@app.post("/folders/{safe_name}/vault")
+async def generate_vault(
+    safe_name: str,
+    client_id: Optional[str] = Query(default=None),
+):
+    """Generate an Obsidian vault from the converted Markdown."""
+    async def cb(p: int, m: str):
+        await _push(client_id, p, m)
+
+    return await vault_service.generate(safe_name, BASE_DATA_DIR, cb)
+
+
+@app.get("/folders/{safe_name}/vault/files")
+async def list_vault_files(safe_name: str):
+    """Return the list of .md files in the vault."""
+    return vault_service.list_files(safe_name, BASE_DATA_DIR)
+
+
+@app.get("/folders/{safe_name}/vault/path")
+async def get_vault_path(safe_name: str):
+    """Return the absolute filesystem path of the vault directory."""
+    vault_dir = BASE_DATA_DIR / safe_name / "vault"
+    if not vault_dir.exists():
+        raise HTTPException(status_code=404, detail="Vault wurde noch nicht erstellt.")
+    return {"vault_path": str(vault_dir)}
+
+
+# ---------------------------------------------------------------------------
+# AI Chat
+# ---------------------------------------------------------------------------
+
+
+@app.post("/folders/{safe_name}/chat")
+async def chat(safe_name: str, body: ChatMessage):
+    """Answer a question using the vault as knowledge source."""
+    loaded_settings = settings_manager.load_settings(safe_name, BASE_DATA_DIR)
+    loop = __import__("asyncio").get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        chat_service.chat,
+        safe_name,
+        BASE_DATA_DIR,
+        body.message,
+        body.history,
+        loaded_settings,
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
