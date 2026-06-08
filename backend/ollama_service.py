@@ -156,34 +156,68 @@ class OllamaService:
         claude_vis_model  = settings.get("claude_vision_model", "claude-haiku-4-5-20251001")
         active_vis_label  = f"Claude ({claude_vis_model})" if vision_provider == "claude" else vision_model
 
-        # --- Pass 1: Vision enrichment (loads vision model once for all chunks) ---
+        # --- Pass 1: Vision enrichment (one image at a time for granular progress) ---
         enriched_chunks = list(chunks)
         if use_vision:
-            chunks_with_images = [
-                i for i, c in enumerate(chunks)
-                if re.search(r'!\[.*?\]\(images/', c)
-            ]
-            if chunks_with_images:
-                total_img_chunks = len(chunks_with_images)
+            # Collect all (chunk_idx, alt_text, filename) triples up front
+            image_jobs: list[tuple[int, str, str]] = []
+            for ci, chunk in enumerate(chunks):
+                for m in re.finditer(r'!\[([^\]]*)\]\(images/([^)]+)\)', chunk):
+                    image_jobs.append((ci, m.group(1), m.group(2)))
+
+            if image_jobs:
+                total_images = len(image_jobs)
+                unique_chunks = len({j[0] for j in image_jobs})
                 await self._emit(progress, 10,
-                    f"Bildanalyse: {total_img_chunks} Abschnitt(e) mit Bildern via {active_vis_label}…")
-                for seq, i in enumerate(chunks_with_images):
+                    f"Bildanalyse: {total_images} Bild(er) in {unique_chunks} Abschnitt(en) via {active_vis_label}…")
+
+                # descriptions[chunk_idx][filename] = description text
+                import time
+                descriptions: dict[int, dict[str, str]] = {}
+
+                for img_seq, (chunk_idx, alt, filename) in enumerate(image_jobs):
                     if cancel_check and cancel_check():
                         await self._emit(progress, 0, "⚠ Vorgang durch Benutzer abgebrochen.")
                         raise RuntimeError("Abgebrochen")
-                    img_count = len(re.findall(r'!\[.*?\]\(images/', chunks[i]))
-                    pct = 10 + int((seq / total_img_chunks) * 25)
+
+                    pct = 10 + int((img_seq / total_images) * 25)
                     await self._emit(progress, pct,
-                        f"↳ Analysiere {img_count} Bild(er) in Abschnitt {i + 1}/{total}…")
-                    enriched_chunks[i] = await loop.run_in_executor(
-                        None,
-                        self._enrich_chunk_with_vision,
-                        chunks[i],
-                        converted_dir / "images",
-                        vision_provider,
-                        vision_model,
-                        claude_vis_model,
-                    )
+                        f"🖼 Bild {img_seq + 1}/{total_images}: {filename} (Abschnitt {chunk_idx + 1}/{total})…")
+
+                    image_path = converted_dir / "images" / filename
+                    t0 = time.monotonic()
+                    if vision_provider == "claude":
+                        desc = await loop.run_in_executor(
+                            None, self._describe_image_claude, image_path, claude_vis_model, alt
+                        )
+                    else:
+                        desc = await loop.run_in_executor(
+                            None, self._describe_image_ollama, image_path, vision_model, alt
+                        )
+                    elapsed = time.monotonic() - t0
+
+                    if chunk_idx not in descriptions:
+                        descriptions[chunk_idx] = {}
+                    descriptions[chunk_idx][filename] = desc
+
+                    if desc:
+                        await self._emit(progress, pct,
+                            f"  ✓ {filename} ({elapsed:.1f}s): {desc[:80]}…")
+                    else:
+                        await self._emit(progress, pct,
+                            f"  ⚠ {filename} ({elapsed:.1f}s): Keine Beschreibung – Bild übersprungen")
+
+                # Apply collected descriptions back into the chunks
+                for ci, descs in descriptions.items():
+                    def _apply(chunk: str, _descs: dict = descs) -> str:
+                        def replace(m: re.Match) -> str:
+                            d = _descs.get(m.group(2), "")
+                            if d:
+                                label = m.group(1) or m.group(2)
+                                return f'\n> 📷 **Abbildung – {label}:** {d}\n'
+                            return m.group(0)
+                        return re.sub(r'!\[([^\]]*)\]\(images/([^)]+)\)', replace, chunk)
+                    enriched_chunks[ci] = _apply(chunks[ci])
 
         # --- Pass 2: Text summarization (loads text model once for all chunks) ---
         await self._emit(progress, 35, f"Starte Textzusammenfassung für {total} Abschnitte…")
@@ -307,7 +341,9 @@ class OllamaService:
                 desc = self._describe_image_ollama(image_path, ollama_model, alt)
             if desc:
                 label = alt or filename
-                return f'\n> 📷 **Abbildung – {label}:** {desc}\n'
+                # Keep the original image reference AND add a description caption below.
+                # This way the text summarizer can still include the image in its output.
+                return f'![{alt}](images/{filename})\n> 📷 **{label}:** {desc}\n'
             return match.group(0)
 
         return re.sub(r'!\[([^\]]*)\]\(images/([^)]+)\)', replace_image, chunk)
@@ -424,6 +460,11 @@ class OllamaService:
         user_msg = (
             f"Hier ist Abschnitt {chunk_number} von {total_chunks} eines Lernscripts:\n\n"
             f"---\n{chunk}\n---\n\n{length_hint}\n\n"
+            "Bilder: Manche Bilder haben darunter eine KI-Beschreibung (> 📷 ...). "
+            "Nutze diese Beschreibung NUR als Entscheidungshilfe: Ist das Bild ein wichtiges "
+            "Diagramm, Modell oder Visualisierung? Dann behalte NUR die Bildreferenz "
+            "`![alt](images/dateiname)` – ohne die Beschreibung. Ist es dekorativ (Logo, Icon, "
+            "Hintergrund)? Dann lass Bild und Beschreibung komplett weg.\n\n"
             "Antworte ausschließlich mit dem zusammengefassten Markdown. "
             "Keine Einleitung, keine Erklärung – direkt das Markdown."
         )
@@ -455,6 +496,11 @@ class OllamaService:
         user_msg = (
             f"Hier ist Abschnitt {chunk_number} von {total_chunks} eines Lernscripts:\n\n"
             f"---\n{chunk}\n---\n\n{length_hint}\n\n"
+            "Bilder: Manche Bilder haben darunter eine KI-Beschreibung (> 📷 ...). "
+            "Nutze diese Beschreibung NUR als Entscheidungshilfe: Ist das Bild ein wichtiges "
+            "Diagramm, Modell oder Visualisierung? Dann behalte NUR die Bildreferenz "
+            "`![alt](images/dateiname)` – ohne die Beschreibung. Ist es dekorativ (Logo, Icon, "
+            "Hintergrund)? Dann lass Bild und Beschreibung komplett weg.\n\n"
             "Antworte ausschließlich mit dem zusammengefassten Markdown. "
             "Keine Einleitung, keine Erklärung – direkt das Markdown."
         )
@@ -494,58 +540,67 @@ class OllamaService:
         title: str,
     ) -> str:
         """
-        Combine individual chunk summaries into one coherent Markdown document.
+        Combine chunk summaries into one coherent Markdown document via Ollama.
 
-        For shorter combined texts (< 20 000 chars) a final Ollama pass removes
-        duplicates and adds a table of contents. For very long combined texts the
-        chunks are concatenated directly with a generated header.
-
-        Args:
-            summaries: List of per-chunk Markdown summaries
-            settings:  AI settings
-            title:     Original document filename stem (used as the H1 heading)
-
-        Returns:
-            Final Markdown document as a string
+        For large documents, merges in batches of 5 summaries at a time (hierarchical
+        reduce), so the context window limit is never exceeded.
         """
         import ollama
 
-        combined = "\n\n---\n\n".join(summaries)
+        model = settings.get("ollama_model", "qwen2.5:14b")
+        temperature = settings.get("temperature", 0.3)
+        system_prompt = settings.get("system_prompt", "")
 
-        if len(combined) < 20_000:
-            # Final unification pass to create a professional study document
+        def _ollama_merge(parts: list[str], is_final: bool) -> str:
+            combined = "\n\n---\n\n".join(parts)
+            if is_final:
+                instruction = (
+                    "Das sind alle Teilzusammenfassungen eines Lernscripts. "
+                    "Erstelle daraus EIN einheitliches, kompaktes Lerndokument.\n"
+                    "- Füge ein Inhaltsverzeichnis am Anfang ein\n"
+                    "- Entferne Duplikate konsequent\n"
+                    "- Das Ergebnis muss KÜRZER sein als die Eingabe – fasse knapp zusammen\n"
+                    "- Behalte wichtige Diagramme/Abbildungen als `![alt](images/dateiname)` – ohne Beschreibungstexte darunter\n"
+                    "- Behalte Formeln, Tabellen und Codeblöcke\n\n"
+                    f"{combined}\n\n"
+                    "Antworte nur mit dem finalen Markdown-Dokument."
+                )
+            else:
+                instruction = (
+                    "Fasse diese Teilzusammenfassungen zu einem kompakten Zwischenergebnis zusammen. "
+                    "Entferne Duplikate, behalte alle wichtigen Konzepte, Bilder und Formeln.\n\n"
+                    f"{combined}\n\n"
+                    "Antworte nur mit dem Markdown."
+                )
             response = ollama.chat(
-                model=settings.get("ollama_model", "llama3.1"),
+                model=model,
                 messages=[
-                    {"role": "system", "content": settings.get("system_prompt", "")},
-                    {
-                        "role": "user",
-                        "content": (
-                            "Das sind die Teilzusammenfassungen eines Lernscripts. "
-                            "Erstelle daraus ein einheitliches, gut strukturiertes Lerndokument.\n"
-                            "- Füge ein Markdown-Inhaltsverzeichnis am Anfang ein\n"
-                            "- Entferne Duplikate und verbinde verwandte Themen\n"
-                            "- Behalte Formeln, Tabellen und Codeblöcke bei\n\n"
-                            f"{combined}\n\n"
-                            "Antworte nur mit dem finalen Markdown-Dokument."
-                        ),
-                    },
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": instruction},
                 ],
-                options={
-                    "temperature": settings.get("temperature", 0.3),
-                    "num_ctx": 8192,
-                },
+                options={"temperature": temperature, "num_ctx": 8192},
             )
-            body = _extract_content(response)
-        else:
-            # Document too large for a unification pass – concatenate directly
-            body = combined
+            return _extract_content(response)
 
+        # Hierarchical merge: batch into groups of 5 until only 1 chunk remains
+        BATCH = 5
+        current = list(summaries)
+        while len(current) > BATCH:
+            batches = [current[i:i + BATCH] for i in range(0, len(current), BATCH)]
+            current = [_ollama_merge(b, is_final=False) for b in batches]
+
+        body = _ollama_merge(current, is_final=True)
         return f"# Zusammenfassung: {title}\n\n{body}"
 
     @staticmethod
     def _merge_summaries_claude(summaries: list[str], settings: dict, title: str) -> str:
-        """Merge chunk summaries into one document using Claude API."""
+        """
+        Merge chunk summaries into one compact study document using Claude API.
+
+        Claude supports up to 200K input tokens, so we always run the merge pass
+        regardless of document size. For very large combined texts (> 150K chars)
+        we do a hierarchical merge in two stages to stay within safe limits.
+        """
         import os
         import anthropic
 
@@ -553,28 +608,21 @@ class OllamaService:
         if not api_key or api_key == "dein-api-key-hier":
             raise RuntimeError("ANTHROPIC_API_KEY nicht in .env konfiguriert.")
 
-        combined = "\n\n---\n\n".join(summaries)
+        model = settings.get("claude_model", "claude-haiku-4-5-20251001")
+        temperature = settings.get("temperature", 0.3)
+        system_prompt = settings.get("system_prompt", "")
 
-        if len(combined) < 20_000:
-            merge_prompt = (
-                "Das sind die Teilzusammenfassungen eines Lernscripts. "
-                "Erstelle daraus ein einheitliches, gut strukturiertes Lerndokument.\n"
-                "- Füge ein Markdown-Inhaltsverzeichnis am Anfang ein\n"
-                "- Entferne Duplikate und verbinde verwandte Themen\n"
-                "- Behalte Formeln, Tabellen und Codeblöcke bei\n\n"
-                f"{combined}\n\n"
-                "Antworte nur mit dem finalen Markdown-Dokument."
-            )
+        def _claude_call(prompt: str) -> str:
             try:
                 client = anthropic.Anthropic(api_key=api_key)
                 message = client.messages.create(
-                    model=settings.get("claude_model", "claude-haiku-4-5-20251001"),
+                    model=model,
                     max_tokens=8192,
-                    temperature=settings.get("temperature", 0.3),
-                    system=settings.get("system_prompt", ""),
-                    messages=[{"role": "user", "content": merge_prompt}],
+                    temperature=temperature,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": prompt}],
                 )
-                body = message.content[0].text
+                return message.content[0].text
             except anthropic.AuthenticationError:
                 raise RuntimeError("Claude API: Ungültiger API Key. Bitte .env prüfen.")
             except anthropic.BadRequestError as e:
@@ -587,9 +635,38 @@ class OllamaService:
                 raise RuntimeError("Claude API: Rate Limit erreicht. Bitte kurz warten.")
             except Exception as e:
                 raise RuntimeError(f"Claude API nicht erreichbar: {e}")
-        else:
-            body = combined
 
+        # For very large inputs, do a two-stage hierarchical merge
+        STAGE1_LIMIT = 150_000
+        combined = "\n\n---\n\n".join(summaries)
+        if len(combined) > STAGE1_LIMIT:
+            mid = len(summaries) // 2
+            part_a = _claude_call(
+                "Fasse diese Teilzusammenfassungen kompakt zusammen. "
+                "Entferne Duplikate, behalte Bilder als `![alt](images/dateiname)`, "
+                "Formeln, Tabellen. Antworte nur mit Markdown.\n\n"
+                + "\n\n---\n\n".join(summaries[:mid])
+            )
+            part_b = _claude_call(
+                "Fasse diese Teilzusammenfassungen kompakt zusammen. "
+                "Entferne Duplikate, behalte Bilder als `![alt](images/dateiname)`, "
+                "Formeln, Tabellen. Antworte nur mit Markdown.\n\n"
+                + "\n\n---\n\n".join(summaries[mid:])
+            )
+            combined = part_a + "\n\n---\n\n" + part_b
+
+        merge_prompt = (
+            "Das sind die Teilzusammenfassungen eines Lernscripts. "
+            "Erstelle daraus EIN kompaktes, gut strukturiertes Lerndokument.\n"
+            "- Füge ein Markdown-Inhaltsverzeichnis am Anfang ein\n"
+            "- Entferne Duplikate konsequent und verbinde verwandte Themen\n"
+            "- Das Ergebnis muss KÜRZER sein als die Eingabe – nur das Wesentliche\n"
+            "- Behalte wichtige Diagramme/Abbildungen als `![alt](images/dateiname)` – ohne Beschreibungstexte darunter\n"
+            "- Behalte Formeln, Tabellen und Codeblöcke\n\n"
+            f"{combined}\n\n"
+            "Antworte nur mit dem finalen Markdown-Dokument."
+        )
+        body = _claude_call(merge_prompt)
         return f"# Zusammenfassung: {title}\n\n{body}"
 
     # ------------------------------------------------------------------
