@@ -257,6 +257,9 @@ class OllamaService:
             document_title,
         )
 
+        # Fix any image paths where the AI dropped the leading underscore
+        final_md = self._fix_image_paths(final_md, converted_dir / "images")
+
         # Copy images referenced in the summary to the summary/images/ directory
         copied = self._copy_referenced_images(
             final_md,
@@ -534,6 +537,19 @@ class OllamaService:
         return self._merge_summaries_ollama(summaries, settings, title)
 
     @staticmethod
+    def _fix_image_paths(md_text: str, images_dir: Path) -> str:
+        """Fix image references where the AI dropped the leading underscore from filenames."""
+        def _fix(m: re.Match) -> str:
+            alt, filename = m.group(1), m.group(2)
+            if (images_dir / filename).exists():
+                return m.group(0)
+            fixed = "_" + filename
+            if (images_dir / fixed).exists():
+                return f"![{alt}](images/{fixed})"
+            return m.group(0)
+        return re.sub(r'!\[([^\]]*)\]\(images/([^)]+)\)', _fix, md_text)
+
+    @staticmethod
     def _merge_summaries_ollama(
         summaries: list[str],
         settings: dict,
@@ -551,6 +567,12 @@ class OllamaService:
         temperature = settings.get("temperature", 0.3)
         system_prompt = settings.get("system_prompt", "")
 
+        _IMG_HINT = (
+            "Behalte Bild-Referenzen als `![alt](images/dateiname)` – "
+            "kopiere den Dateinamen exakt (inkl. führendem Unterstrich, z.B. `_page_15_Picture_2.jpeg`). "
+            "Keine Bildbeschreibungen darunter."
+        )
+
         def _ollama_merge(parts: list[str], is_final: bool) -> str:
             combined = "\n\n---\n\n".join(parts)
             if is_final:
@@ -560,7 +582,7 @@ class OllamaService:
                     "- Füge ein Inhaltsverzeichnis am Anfang ein\n"
                     "- Entferne Duplikate konsequent\n"
                     "- Das Ergebnis muss KÜRZER sein als die Eingabe – fasse knapp zusammen\n"
-                    "- Behalte wichtige Diagramme/Abbildungen als `![alt](images/dateiname)` – ohne Beschreibungstexte darunter\n"
+                    f"- {_IMG_HINT}\n"
                     "- Behalte Formeln, Tabellen und Codeblöcke\n\n"
                     f"{combined}\n\n"
                     "Antworte nur mit dem finalen Markdown-Dokument."
@@ -568,7 +590,7 @@ class OllamaService:
             else:
                 instruction = (
                     "Fasse diese Teilzusammenfassungen zu einem kompakten Zwischenergebnis zusammen. "
-                    "Entferne Duplikate, behalte alle wichtigen Konzepte, Bilder und Formeln.\n\n"
+                    f"Entferne Duplikate, behalte alle wichtigen Konzepte, Formeln und Tabellen. {_IMG_HINT}\n\n"
                     f"{combined}\n\n"
                     "Antworte nur mit dem Markdown."
                 )
@@ -597,9 +619,10 @@ class OllamaService:
         """
         Merge chunk summaries into one compact study document using Claude API.
 
-        Claude supports up to 200K input tokens, so we always run the merge pass
-        regardless of document size. For very large combined texts (> 150K chars)
-        we do a hierarchical merge in two stages to stay within safe limits.
+        Uses the same hierarchical batch-reduce strategy as the Ollama path.
+        Claude haiku is capped at 8192 output tokens, so we can never send all
+        chunk summaries in one shot for large documents — we reduce in passes of
+        BATCH chunks until only one group remains.
         """
         import os
         import anthropic
@@ -636,32 +659,36 @@ class OllamaService:
             except Exception as e:
                 raise RuntimeError(f"Claude API nicht erreichbar: {e}")
 
-        # For very large inputs, do a two-stage hierarchical merge
-        STAGE1_LIMIT = 150_000
-        combined = "\n\n---\n\n".join(summaries)
-        if len(combined) > STAGE1_LIMIT:
-            mid = len(summaries) // 2
-            part_a = _claude_call(
-                "Fasse diese Teilzusammenfassungen kompakt zusammen. "
-                "Entferne Duplikate, behalte Bilder als `![alt](images/dateiname)`, "
-                "Formeln, Tabellen. Antworte nur mit Markdown.\n\n"
-                + "\n\n---\n\n".join(summaries[:mid])
-            )
-            part_b = _claude_call(
-                "Fasse diese Teilzusammenfassungen kompakt zusammen. "
-                "Entferne Duplikate, behalte Bilder als `![alt](images/dateiname)`, "
-                "Formeln, Tabellen. Antworte nur mit Markdown.\n\n"
-                + "\n\n---\n\n".join(summaries[mid:])
-            )
-            combined = part_a + "\n\n---\n\n" + part_b
+        _IMG_HINT = (
+            "Behalte Bild-Referenzen als `![alt](images/dateiname)` – "
+            "kopiere den Dateinamen exakt (inkl. führendem Unterstrich, z.B. `_page_15_Picture_2.jpeg`). "
+            "Keine Bildbeschreibungen darunter."
+        )
 
+        # Hierarchical reduce – identical strategy to Ollama path
+        BATCH = 8
+        current = list(summaries)
+        while len(current) > BATCH:
+            batches = [current[i:i + BATCH] for i in range(0, len(current), BATCH)]
+            current = [
+                _claude_call(
+                    "Fasse diese Teilzusammenfassungen zu einem kompakten Zwischenergebnis zusammen. "
+                    "Entferne Duplikate, behalte alle wichtigen Konzepte, Formeln und Tabellen. "
+                    f"{_IMG_HINT}\n\n"
+                    + "\n\n---\n\n".join(b)
+                    + "\n\nAntworte nur mit dem Markdown."
+                )
+                for b in batches
+            ]
+
+        combined = "\n\n---\n\n".join(current)
         merge_prompt = (
             "Das sind die Teilzusammenfassungen eines Lernscripts. "
             "Erstelle daraus EIN kompaktes, gut strukturiertes Lerndokument.\n"
             "- Füge ein Markdown-Inhaltsverzeichnis am Anfang ein\n"
             "- Entferne Duplikate konsequent und verbinde verwandte Themen\n"
             "- Das Ergebnis muss KÜRZER sein als die Eingabe – nur das Wesentliche in einfachen Worten\n"
-            "- Behalte wichtige Diagramme/Abbildungen als `![alt](images/dateiname)` – ohne Beschreibungstexte darunter\n"
+            f"- {_IMG_HINT}\n"
             "- Behalte Formeln, Tabellen und Codeblöcke\n\n"
             f"{combined}\n\n"
             "Antworte nur mit dem finalen Markdown-Dokument."
