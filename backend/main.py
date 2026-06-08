@@ -278,6 +278,21 @@ async def get_summary(safe_name: str):
     return {"content": summary_path.read_text(encoding="utf-8")}
 
 
+@app.delete("/folders/{safe_name}/summary")
+async def delete_summary(safe_name: str):
+    """Delete the summary file and its copied images so it can be regenerated."""
+    import shutil as _shutil
+    summary_dir = BASE_DATA_DIR / safe_name / "summary"
+    summary_file = summary_dir / "summary.md"
+    if not summary_file.exists():
+        raise HTTPException(status_code=404, detail="Keine Zusammenfassung vorhanden.")
+    summary_file.unlink()
+    images_dir = summary_dir / "images"
+    if images_dir.exists():
+        _shutil.rmtree(images_dir)
+    return {"message": "Zusammenfassung gelöscht."}
+
+
 # ---------------------------------------------------------------------------
 # Obsidian Vault
 # ---------------------------------------------------------------------------

@@ -153,6 +153,15 @@ async function apiGetSummary(safeName) {
     return _req(`/folders/${encodeURIComponent(safeName)}/summary`);
 }
 
+/**
+ * Delete the summary file so it can be regenerated.
+ * @param {string} safeName - Filesystem-safe folder name
+ * @returns {Promise<Object>}
+ */
+async function apiDeleteSummary(safeName) {
+    return _req(`/folders/${encodeURIComponent(safeName)}/summary`, { method: 'DELETE' });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Settings
 // ─────────────────────────────────────────────────────────────────────────────

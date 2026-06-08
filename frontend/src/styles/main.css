@@ -1567,3 +1567,12 @@ html, body {
   opacity: 0.35;
   cursor: not-allowed;
 }
+
+/* ── Summary panel – delete toolbar ─────────────────────────────────── */
+.summary-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}

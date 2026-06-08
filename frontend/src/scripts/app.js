@@ -94,8 +94,9 @@ const dom = {
     panelSummary:   $('panel-summary'),
     panelVault:     $('panel-vault'),
     panelChat:      $('panel-chat'),
-    markdownViewer: $('markdown-viewer'),
-    summaryViewer:  $('summary-viewer'),
+    markdownViewer:    $('markdown-viewer'),
+    summaryViewer:     $('summary-viewer'),
+    btnDeleteSummary:  $('btn-delete-summary'),
 
     // Vault
     btnGenerateVault:  $('btn-generate-vault'),
@@ -985,6 +986,42 @@ function _confirmDeleteFolder(folder, cardEl) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Delete summary
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _deleteSummary() {
+    if (!state.currentFolder) return;
+    _openConfirmModal({
+        icon:         '🗑',
+        title:        'Zusammenfassung löschen',
+        message:      'Die KI-Zusammenfassung wird unwiderruflich gelöscht. Du kannst sie danach neu generieren.',
+        confirmLabel: 'Löschen',
+        onConfirm:    async () => {
+            try {
+                await apiDeleteSummary(state.currentFolder.safe_name);
+                state.currentFolder.has_summary = false;
+
+                // Show workflow cards again so the user can re-summarize
+                dom.workflowSection.classList.remove('hidden');
+                dom.workflowDoneStrip.classList.add('hidden');
+                _setStep(dom.stepSummarize, false);
+
+                // Clear viewer and switch to markdown tab
+                dom.summaryViewer.innerHTML = '';
+                _switchTab('markdown');
+
+                dom.btnSummarize.disabled = !state.currentFolder.has_markdown;
+
+                await _loadFolders();
+                _showToast('Zusammenfassung gelöscht – jetzt neu generieren!');
+            } catch (err) {
+                _showToast('Fehler beim Löschen: ' + err.message);
+            }
+        },
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Settings panel
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1141,6 +1178,9 @@ function _wireUIEvents() {
         dom.workflowSection.classList.remove('hidden');
         dom.workflowDoneStrip.classList.add('hidden');
     });
+
+    // Delete summary
+    dom.btnDeleteSummary.addEventListener('click', _deleteSummary);
 
     // Vault buttons
     dom.btnGenerateVault.addEventListener('click',  _generateVault);
