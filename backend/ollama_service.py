@@ -530,22 +530,42 @@ class OllamaService:
         progress: Optional[Callable[[int, str], Awaitable[None]]],
     ) -> str:
         """
-        Hierarchical merge with live progress updates.
+        Smart merge with live progress updates.
 
-        Reduces chunk summaries in passes of BATCH until ≤ BATCH remain,
-        then does one final merge. Intermediate calls use a tight token budget
-        (2000) so they stay compact; the final call gets the full 8192 budget.
-        Each API call runs in an executor so the event loop stays unblocked and
-        progress messages reach the UI between batches.
+        Strategy: if all chunk summaries fit in a single API call (≤ DIRECT_LIMIT
+        chars combined), skip intermediate rounds entirely and feed everything
+        straight into the final merge. This preserves all detail and produces
+        much better summaries for typical university course scripts (~50-150 chunks).
+
+        For very large documents (> DIRECT_LIMIT) a hierarchical reduce runs first
+        with BATCH=5 and 3000-token intermediate budgets to keep compression mild
+        before the final 8192-token merge.
         """
         loop = asyncio.get_running_loop()
         provider = settings.get("ai_provider", "ollama")
-        BATCH = 8
+
+        # Anything under 150K chars fits in Claude's 200K-token context window
+        # as input and is better summarised in a single pass than after lossy
+        # intermediate compression rounds. Ollama context is set to 32K below.
+        DIRECT_LIMIT = 150_000
+        BATCH = 5   # smaller batches = milder compression when hierarchical is needed
 
         _IMG_HINT = (
             "Behalte Bild-Referenzen als `![alt](images/dateiname)` – "
             "kopiere den Dateinamen exakt (inkl. führendem Unterstrich, z.B. `_page_15_Picture_2.jpeg`). "
             "Keine Bildbeschreibungen darunter."
+        )
+
+        _FINAL_PROMPT = (
+            "Das sind die Abschnittszusammenfassungen eines Lernscripts. "
+            "Erstelle daraus EIN kompaktes, gut strukturiertes Lerndokument.\n"
+            "- Füge ein Markdown-Inhaltsverzeichnis am Anfang ein\n"
+            "- Alle wichtigen Themen und Lektionen müssen vorkommen – nichts weglassen\n"
+            "- Entferne Duplikate und verbinde verwandte Themen\n"
+            f"- {_IMG_HINT}\n"
+            "- Behalte Formeln, Tabellen und Codeblöcke\n\n"
+            "{combined}\n\n"
+            "Antworte nur mit dem finalen Markdown-Dokument."
         )
 
         # Build a provider-specific blocking call function
@@ -555,7 +575,7 @@ class OllamaService:
             api_key = _os.environ.get("ANTHROPIC_API_KEY", "")
             if not api_key or api_key == "dein-api-key-hier":
                 raise RuntimeError("ANTHROPIC_API_KEY nicht in .env konfiguriert.")
-            model      = settings.get("claude_model", "claude-haiku-4-5-20251001")
+            model       = settings.get("claude_model", "claude-haiku-4-5-20251001")
             temperature = settings.get("temperature", 0.3)
             system_prompt = settings.get("system_prompt", "")
 
@@ -591,62 +611,60 @@ class OllamaService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user",   "content": prompt},
                     ],
-                    options={"temperature": temperature, "num_ctx": 16384, "num_predict": max_tok},
+                    # 32K context lets us feed larger inputs; num_predict caps output
+                    options={"temperature": temperature, "num_ctx": 32768, "num_predict": max_tok},
                 )
                 return _extract_content(resp)
 
-        # Calculate total rounds needed for display
-        n, total_rounds = len(summaries), 0
-        _n = len(summaries)
-        while _n > BATCH:
-            _n = -(-_n // BATCH)   # ceiling division
+        combined_all = "\n\n---\n\n".join(summaries)
+
+        if len(combined_all) <= DIRECT_LIMIT:
+            # ── Fast path: single merge call, no information loss ────────
+            await self._emit(progress, 97,
+                f"Direkter Merge: alle {len(summaries)} Abschnitte → Gesamtdokument "
+                f"({len(combined_all):,} Zeichen)…")
+            body = await loop.run_in_executor(None, _call,
+                _FINAL_PROMPT.format(combined=combined_all), 8192)
+        else:
+            # ── Hierarchical path: needed only for very large documents ──
+            current = list(summaries)
+            _n = len(summaries)
+            total_rounds = 0
+            while _n > BATCH:
+                _n = -(-_n // BATCH)
+                total_rounds += 1
             total_rounds += 1
-        total_rounds += 1  # +1 for the final merge
 
-        current = list(summaries)
-        round_idx = 0
-
-        # Intermediate reduce rounds
-        while len(current) > BATCH:
-            round_idx += 1
-            batches   = [current[i:i + BATCH] for i in range(0, len(current), BATCH)]
-            pct       = 88 + int((round_idx / total_rounds) * 9)   # 88 → 97 %
-            await self._emit(progress, pct,
-                f"Merge-Runde {round_idx}/{total_rounds}: {len(batches)} Batch(es) à max. {BATCH} Abschnitte…")
-
-            new_current: list[str] = []
-            for bi, batch in enumerate(batches):
+            round_idx = 0
+            while len(current) > BATCH:
+                round_idx += 1
+                batches = [current[i:i + BATCH] for i in range(0, len(current), BATCH)]
+                pct = 88 + int((round_idx / total_rounds) * 9)
                 await self._emit(progress, pct,
-                    f"  Batch {bi + 1}/{len(batches)}: {len(batch)} Abschnitte → komprimiere…")
-                result = await loop.run_in_executor(None, _call,
-                    "Fasse diese Teilzusammenfassungen zu einem kompakten Zwischenergebnis zusammen. "
-                    f"Entferne Duplikate, behalte wichtige Konzepte, Formeln, Tabellen. {_IMG_HINT}\n\n"
-                    + "\n\n---\n\n".join(batch)
-                    + "\n\nAntworte nur mit dem Markdown.",
-                    2000,   # tight budget keeps intermediates short
-                )
-                new_current.append(result)
-                await self._emit(progress, pct,
-                    f"  ✓ Batch {bi + 1}/{len(batches)} fertig ({len(result)} Zeichen)")
-            current = new_current
+                    f"Merge-Runde {round_idx}/{total_rounds}: {len(batches)} Batch(es) à max. {BATCH} Abschnitte…")
 
-        # Final merge
-        round_idx += 1
-        await self._emit(progress, 97,
-            f"Finaler Merge (Runde {round_idx}/{total_rounds}): {len(current)} Abschnitt(e) → Gesamtdokument…")
-        combined = "\n\n---\n\n".join(current)
-        body = await loop.run_in_executor(None, _call,
-            "Das sind die Teilzusammenfassungen eines Lernscripts. "
-            "Erstelle daraus EIN kompaktes, gut strukturiertes Lerndokument.\n"
-            "- Füge ein Markdown-Inhaltsverzeichnis am Anfang ein\n"
-            "- Entferne Duplikate konsequent und verbinde verwandte Themen\n"
-            "- Das Ergebnis muss KÜRZER sein als die Eingabe – nur das Wesentliche in einfachen Worten\n"
-            f"- {_IMG_HINT}\n"
-            "- Behalte Formeln, Tabellen und Codeblöcke\n\n"
-            f"{combined}\n\n"
-            "Antworte nur mit dem finalen Markdown-Dokument.",
-            8192,   # full budget for final output
-        )
+                new_current: list[str] = []
+                for bi, batch in enumerate(batches):
+                    await self._emit(progress, pct,
+                        f"  Batch {bi + 1}/{len(batches)}: {len(batch)} Abschnitte → komprimiere…")
+                    result = await loop.run_in_executor(None, _call,
+                        "Fasse diese Teilzusammenfassungen kompakt zusammen. "
+                        f"Entferne Duplikate, behalte alle wichtigen Konzepte, Formeln, Tabellen. {_IMG_HINT}\n\n"
+                        + "\n\n---\n\n".join(batch)
+                        + "\n\nAntworte nur mit dem Markdown.",
+                        3000,   # mild compression: 3000 instead of 2000
+                    )
+                    new_current.append(result)
+                    await self._emit(progress, pct,
+                        f"  ✓ Batch {bi + 1}/{len(batches)} fertig ({len(result)} Zeichen)")
+                current = new_current
+
+            combined = "\n\n---\n\n".join(current)
+            await self._emit(progress, 97,
+                f"Finaler Merge (Runde {round_idx + 1}/{total_rounds}): {len(current)} Abschnitt(e)…")
+            body = await loop.run_in_executor(None, _call,
+                _FINAL_PROMPT.format(combined=combined), 8192)
+
         await self._emit(progress, 99, "Finales Dokument erstellt.")
         return f"# Zusammenfassung: {title}\n\n{body}"
 
